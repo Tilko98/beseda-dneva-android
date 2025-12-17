@@ -3,10 +3,8 @@ package si.faks.besedadneva.ui
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
-import androidx.compose.material3.ButtonDefaults
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -14,17 +12,18 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import si.faks.besedadneva.ui.viewmodel.GameMode
 import si.faks.besedadneva.ui.viewmodel.GameViewModel
 import si.faks.besedadneva.ui.viewmodel.GuessRowUi
 
 @Composable
 fun GameScreen(
     vm: GameViewModel,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    onEndOk: (() -> Unit)? = null
 ) {
     val state by vm.state.collectAsState()
 
-    // dialog se pokaže, ko igra postane finished (enkrat)
     var showResultDialog by remember { mutableStateOf(false) }
     LaunchedEffect(state.isFinished) {
         if (state.isFinished) showResultDialog = true
@@ -32,7 +31,7 @@ fun GameScreen(
 
     if (showResultDialog) {
         AlertDialog(
-            onDismissRequest = { showResultDialog = false },
+            onDismissRequest = {},
             title = {
                 Text(
                     text = if (state.isWin) "Bravo! 🎉" else "Konec igre",
@@ -42,22 +41,15 @@ fun GameScreen(
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text("Rešitev: ${state.solution}")
-
-                    // poskusi: če win, je currentRowIndex+1 (ker si v isti vrstici), če lose je 6
-                    val attempts = if (state.isWin) (state.currentRowIndex + 1) else 6
-                    Text("Poskusi: $attempts/6")
-
-                    // (kasneje tu dodamo definicijo iz API/DB)
-                    Text(
-                        text = "Definicija: (kasneje dodamo iz slovarja)",
-                        style = MaterialTheme.typography.bodySmall
-                    )
+                    val attempts = if (state.isWin) state.currentRowIndex + 1 else 6
+                    Text("Poskusi: $attempts / 6")
                 }
             },
             confirmButton = {
-                Button(onClick = { showResultDialog = false }) {
-                    Text("OK")
-                }
+                Button(onClick = {
+                    showResultDialog = false
+                    onEndOk?.invoke()
+                }) { Text("OK") }
             }
         )
     }
@@ -69,10 +61,21 @@ fun GameScreen(
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
         Text(
-            text = "Beseda dneva",
+            text = if (state.mode == GameMode.PRACTICE) "Vaja" else "Beseda dneva",
             style = MaterialTheme.typography.titleLarge,
             fontWeight = FontWeight.Bold
         )
+
+        // DEBUG samo za PRACTICE
+        if (state.mode == GameMode.PRACTICE) {
+            Spacer(Modifier.height(4.dp))
+            Text(
+                text = "DEBUG: ${state.solution}",
+                color = Color.Red,
+                fontSize = 14.sp,
+                fontWeight = FontWeight.Bold
+            )
+        }
 
         Spacer(Modifier.height(8.dp))
 
@@ -85,9 +88,9 @@ fun GameScreen(
 
         Spacer(Modifier.weight(1f))
 
-        Keyboard(
+        KeyboardFixedSl(
             keyStates = state.keyboard,
-            enabled = !state.isFinished,          // ⬅️ blokira UI tipkovnico po koncu
+            enabled = !state.isFinished,
             onLetter = { vm.onLetter(it) },
             onBackspace = { vm.onBackspace() },
             onEnter = { vm.onEnter() }
@@ -146,112 +149,125 @@ private fun keyBg(p: Char?): Color = when (p) {
 }
 
 @Composable
-private fun Keyboard(
+private fun KeyboardFixedSl(
     keyStates: Map<Char, Char>,
     enabled: Boolean,
     onLetter: (Char) -> Unit,
     onBackspace: () -> Unit,
     onEnter: () -> Unit
 ) {
-    val row1 = listOf('Q','E','R','T','Z','U','I','O','P')
-    val row2 = listOf('A','S','D','F','G','H','J','K','L','Č')
-    val row3 = listOf('Y','X','C','V','B','N','M','Š','Ž')
+    // ✅ Slovenska tipkovnica brez Q/W/X/Y
+    val row1 = listOf('E','R','T','Z','U','I','O','P')              // 8
+    val row2 = listOf('A','S','D','F','G','H','J','K','L','Č')      // 10
+    val row3 = listOf('Ž','Š','C','V','B','N','M')                  // 7
+
+    // ✅ manjši gumbi + manjši razmiki -> ENTER + ⌫ vedno vidna
+    val keyW = 30.dp
+    val keyH = 46.dp
+    val gap = 4.dp
 
     Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(bottom = 8.dp),
+        modifier = Modifier.fillMaxWidth(),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        KeyRow(row1, keyStates, enabled, onLetter)
-        Spacer(Modifier.height(6.dp))
-        KeyRow(row2, keyStates, enabled, onLetter)
-        Spacer(Modifier.height(6.dp))
+        KeyRowFixed(row1, keyStates, enabled, keyW, keyH, gap, onLetter)
+        Spacer(Modifier.height(gap))
+        KeyRowFixed(row2, keyStates, enabled, keyW, keyH, gap, onLetter)
+        Spacer(Modifier.height(gap))
 
         Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(6.dp),
-            verticalAlignment = Alignment.CenterVertically
+            horizontalArrangement = Arrangement.spacedBy(gap),
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.wrapContentWidth()
         ) {
-            Button(
-                onClick = onEnter,
-                enabled = enabled,
-                modifier = Modifier
-                    .height(46.dp)
-                    .weight(1.6f),
-                contentPadding = PaddingValues(0.dp),
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = Color(0xFF4A5568),
-                    contentColor = Color.White
-                )
-            ) {
-                Text("ENTER", fontSize = 14.sp, fontWeight = FontWeight.Bold)
-            }
+            ActionKey(text = "ENTER", width = 60.dp, height = keyH, enabled = enabled, onClick = onEnter)
 
             row3.forEach { ch ->
-                val p = keyStates[ch]
-                Button(
-                    onClick = { onLetter(ch) },
+                LetterKey(
+                    ch = ch,
+                    pattern = keyStates[ch],
+                    width = keyW,
+                    height = keyH,
                     enabled = enabled,
-                    modifier = Modifier
-                        .height(46.dp)
-                        .weight(1f),
-                    contentPadding = PaddingValues(0.dp),
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = keyBg(p),
-                        contentColor = Color.White
-                    )
-                ) {
-                    Text(ch.toString(), fontSize = 14.sp, fontWeight = FontWeight.Bold, maxLines = 1)
-                }
+                    onClick = { onLetter(ch) }
+                )
             }
 
-            Button(
-                onClick = onBackspace,
-                enabled = enabled,
-                modifier = Modifier
-                    .height(46.dp)
-                    .weight(1.6f),
-                contentPadding = PaddingValues(0.dp),
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = Color(0xFF4A5568),
-                    contentColor = Color.White
-                )
-            ) {
-                Text("⌫", fontSize = 16.sp, fontWeight = FontWeight.Bold)
-            }
+            // ✅ BACKSPACE (brisanje)
+            ActionKey(text = "⌫", width = 54.dp, height = keyH, enabled = enabled, onClick = onBackspace)
         }
     }
 }
 
 @Composable
-private fun KeyRow(
+private fun KeyRowFixed(
     keys: List<Char>,
     keyStates: Map<Char, Char>,
     enabled: Boolean,
+    keyW: androidx.compose.ui.unit.Dp,
+    keyH: androidx.compose.ui.unit.Dp,
+    gap: androidx.compose.ui.unit.Dp,
     onLetter: (Char) -> Unit
 ) {
     Row(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.spacedBy(6.dp),
-        verticalAlignment = Alignment.CenterVertically
+        horizontalArrangement = Arrangement.spacedBy(gap),
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier.wrapContentWidth()
     ) {
         keys.forEach { ch ->
-            val p = keyStates[ch]
-            Button(
-                onClick = { onLetter(ch) },
+            LetterKey(
+                ch = ch,
+                pattern = keyStates[ch],
+                width = keyW,
+                height = keyH,
                 enabled = enabled,
-                modifier = Modifier
-                    .height(46.dp)
-                    .weight(1f),
-                contentPadding = PaddingValues(0.dp),
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = keyBg(p),
-                    contentColor = Color.White
-                )
-            ) {
-                Text(ch.toString(), fontSize = 14.sp, fontWeight = FontWeight.Bold, maxLines = 1)
-            }
+                onClick = { onLetter(ch) }
+            )
         }
+    }
+}
+
+@Composable
+private fun LetterKey(
+    ch: Char,
+    pattern: Char?,
+    width: androidx.compose.ui.unit.Dp,
+    height: androidx.compose.ui.unit.Dp,
+    enabled: Boolean,
+    onClick: () -> Unit
+) {
+    Button(
+        onClick = onClick,
+        enabled = enabled,
+        modifier = Modifier.size(width, height),
+        contentPadding = PaddingValues(0.dp),
+        colors = ButtonDefaults.buttonColors(
+            containerColor = keyBg(pattern),
+            contentColor = Color.White
+        )
+    ) {
+        Text(ch.toString(), fontWeight = FontWeight.Bold, fontSize = 14.sp, maxLines = 1)
+    }
+}
+
+@Composable
+private fun ActionKey(
+    text: String,
+    width: androidx.compose.ui.unit.Dp,
+    height: androidx.compose.ui.unit.Dp,
+    enabled: Boolean,
+    onClick: () -> Unit
+) {
+    Button(
+        onClick = onClick,
+        enabled = enabled,
+        modifier = Modifier.size(width, height),
+        contentPadding = PaddingValues(0.dp),
+        colors = ButtonDefaults.buttonColors(
+            containerColor = Color(0xFF4A5568),
+            contentColor = Color.White
+        )
+    ) {
+        Text(text, fontWeight = FontWeight.Bold, fontSize = 14.sp, maxLines = 1)
     }
 }
