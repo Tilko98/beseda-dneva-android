@@ -15,11 +15,6 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
-private fun todayIsoDate(): String {
-    val fmt = SimpleDateFormat("yyyy-MM-dd", Locale.US)
-    return fmt.format(Date())
-}
-
 enum class GameMode { DAILY, PRACTICE }
 
 data class GuessRowUi(
@@ -30,14 +25,20 @@ data class GuessRowUi(
 data class GameUiState(
     val date: String,
     val mode: GameMode,
-    val solution: String,             // za zdaj je tu (kasneje lahko skriješ)
-    val rows: List<GuessRowUi>,       // 6 vrstic
+    val solution: String,
+    val rows: List<GuessRowUi>,
     val currentRowIndex: Int,
     val currentColIndex: Int,
     val isFinished: Boolean,
     val isWin: Boolean,
-    val message: String? = null
+    val message: String? = null,
+    val keyboard: Map<Char, Char> = emptyMap() // črka -> 'G'/'Y'/'X'
 )
+
+private fun todayIsoDate(): String {
+    val fmt = SimpleDateFormat("yyyy-MM-dd", Locale.US)
+    return fmt.format(Date())
+}
 
 class GameViewModel(
     private val repo: GameRepository,
@@ -58,7 +59,8 @@ class GameViewModel(
             currentColIndex = 0,
             isFinished = false,
             isWin = false,
-            message = null
+            message = null,
+            keyboard = emptyMap()
         )
     )
     val state: StateFlow<GameUiState> = _state.asStateFlow()
@@ -129,12 +131,15 @@ class GameViewModel(
             this[s.currentRowIndex] = row.copy(pattern = pattern)
         }
 
+        val keyboard = computeKeyboard(updatedRows)
+
         val win = pattern.all { it == 'G' }
         val lastRow = s.currentRowIndex == 5
         val finished = win || lastRow
 
         val nextState = s.copy(
             rows = updatedRows,
+            keyboard = keyboard,
             currentRowIndex = if (!finished) s.currentRowIndex + 1 else s.currentRowIndex,
             currentColIndex = if (!finished) 0 else s.currentColIndex,
             isFinished = finished,
@@ -147,39 +152,54 @@ class GameViewModel(
         if (finished) saveGameToDb(nextState)
     }
 
+    // G > Y > X
+    private fun computeKeyboard(rows: List<GuessRowUi>): Map<Char, Char> {
+        val map = mutableMapOf<Char, Char>()
 
-    private fun updateRow(index: Int, newRow: GuessRowUi) {
-        val s = _state.value
-        val updated = s.rows.toMutableList()
-        updated[index] = newRow
-        _state.value = s.copy(rows = updated)
+        fun better(newP: Char, oldP: Char?): Boolean {
+            if (oldP == null) return true
+            if (oldP == 'G') return false
+            if (oldP == 'Y') return newP == 'G'
+            // oldP == 'X'
+            return newP == 'Y' || newP == 'G'
+        }
+
+        rows.forEach { r ->
+            val pat = r.pattern ?: return@forEach
+            for (i in 0 until 5) {
+                val ch = r.letters[i]
+                if (ch == ' ') continue
+                val p = pat[i]
+                val prev = map[ch]
+                if (better(p, prev)) map[ch] = p
+            }
+        }
+        return map
     }
 
     private fun saveGameToDb(s: GameUiState) {
-        // zberemo samo oddane ugibe (kjer pattern != null)
-        val submitted = s.rows
-            .mapIndexedNotNull { idx, r ->
-                if (r.pattern == null) null
-                else Triple(idx, r.letters.replace(" ", ""), r.pattern)
-            }
+        val submitted = s.rows.mapIndexedNotNull { idx, r ->
+            val pat = r.pattern ?: return@mapIndexedNotNull null
+            Triple(idx, r.letters.replace(" ", ""), pat)
+        }
 
         val attemptsUsed = submitted.size.coerceIn(0, 6)
 
         val game = GameEntity(
             date = s.date,
-            mode = s.mode.name, // "DAILY" / "PRACTICE"
+            mode = s.mode.name,
             solution = s.solution,
             won = s.isWin,
             attemptsUsed = attemptsUsed,
             finishedAtMillis = System.currentTimeMillis()
         )
 
-        val guesses = submitted.map { (idx, word, pattern) ->
+        val guesses = submitted.map { (idx, word, pat) ->
             GuessEntity(
-                gameId = 0, // repo bo nastavil pravi gameId po insertu
+                gameId = 0, // repo bo nastavil pravi id
                 guessIndex = idx,
                 guessWord = word,
-                pattern = pattern
+                pattern = pat
             )
         }
 
