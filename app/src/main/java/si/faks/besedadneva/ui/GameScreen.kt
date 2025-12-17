@@ -19,6 +19,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import si.faks.besedadneva.ui.viewmodel.GameViewModel
 import si.faks.besedadneva.ui.viewmodel.GuessRowUi
+import androidx.compose.foundation.layout.PaddingValues
+
 
 @Composable
 fun GameScreen(
@@ -107,91 +109,109 @@ private fun Keyboard(
     onBackspace: () -> Unit,
     onEnter: () -> Unit
 ) {
-    val row1 = listOf('Q','W','E','R','T','Y','U','I','O','P')
+    val row1 = listOf('E','R','T','U','I','O','P','Š','Ž')
     val row2 = listOf('A','S','D','F','G','H','J','K','L','Č')
-    val row3 = listOf('Z','X','C','V','B','N','M','Š','Ž')
+    val row3 = listOf('Z','C','V','B','N','M',)
 
     Column(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(bottom = 8.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        KeyRow(keys = row1, onLetter = onLetter)
+        KeyRow(row1, onLetter)
         Spacer(Modifier.height(6.dp))
-        KeyRow(keys = row2, onLetter = onLetter)
+        KeyRow(row2, onLetter)
         Spacer(Modifier.height(6.dp))
 
         Row(
             modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(6.dp),
-            verticalAlignment = Alignment.CenterVertically
+            horizontalArrangement = Arrangement.spacedBy(6.dp)
         ) {
             // ENTER
             Button(
                 onClick = onEnter,
+                modifier = Modifier
+                    .height(48.dp)
+                    .weight(1.5f),
                 colors = ButtonDefaults.buttonColors(
                     containerColor = Color(0xFF4A5568),
                     contentColor = Color.White
-                ),
-                modifier = Modifier
-                    .height(48.dp)
-                    .weight(1.6f)
+                )
             ) {
-                Text("ENTER", fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                Text("ENTER", fontWeight = FontWeight.Bold)
             }
 
-            // Črke tretje vrstice
             row3.forEach { ch ->
                 Button(
                     onClick = { onLetter(ch) },
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = Color(0xFF4A5568),
-                        contentColor = Color.White
-                    ),
                     modifier = Modifier
-                        .height(48.dp)
-                        .weight(1f)
+                        .height(46.dp)
+                        .weight(1f),
+                    contentPadding = PaddingValues(0.dp),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = Color(0xFF718096),
+                        contentColor = Color.White
+                    )
                 ) {
-                    Text(ch.toString(), fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                    Text(
+                        ch.toString(),
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.Bold,
+                        maxLines = 1
+                    )
                 }
+
             }
 
             // BACKSPACE
             Button(
                 onClick = onBackspace,
+                modifier = Modifier
+                    .height(48.dp)
+                    .weight(1.5f),
                 colors = ButtonDefaults.buttonColors(
                     containerColor = Color(0xFF4A5568),
                     contentColor = Color.White
-                ),
-                modifier = Modifier
-                    .height(48.dp)
-                    .weight(1.6f)
+                )
             ) {
-                Text("⌫", fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                Text("⌫", fontWeight = FontWeight.Bold)
             }
         }
     }
 }
 
+
 @Composable
-private fun KeyRow(keys: List<Char>, onLetter: (Char) -> Unit) {
+private fun KeyRow(
+    keys: List<Char>,
+    onLetter: (Char) -> Unit
+) {
     Row(
         modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.spacedBy(6.dp),
-        verticalAlignment = Alignment.CenterVertically
+        horizontalArrangement = Arrangement.spacedBy(6.dp)
     ) {
         keys.forEach { ch ->
             Button(
                 onClick = { onLetter(ch) },
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = Color(0xFF4A5568),
-                    contentColor = Color.White
-                ),
                 modifier = Modifier
-                    .height(48.dp)
-                    .weight(1f)
+                    .height(46.dp)
+                    .weight(1f),
+                contentPadding = PaddingValues(0.dp),
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = Color(0xFF718096),
+                    contentColor = Color.White
+                )
             ) {
-                Text(ch.toString(), fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                Text(
+                    text = ch.toString(),
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.Bold,
+                    maxLines = 1
+                )
             }
+
         }
     }
 }
+
