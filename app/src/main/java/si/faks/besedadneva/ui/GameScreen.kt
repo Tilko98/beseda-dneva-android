@@ -24,14 +24,14 @@ fun GameScreen(
 ) {
     val state by vm.state.collectAsState()
 
-    var showResultDialog by remember { mutableStateOf(false) }
-    LaunchedEffect(state.isFinished) {
-        if (state.isFinished) showResultDialog = true
-    }
 
-    if (showResultDialog) {
+
+    if (state.isFinished && !state.isDialogShown) {
         AlertDialog(
-            onDismissRequest = {},
+            onDismissRequest = {
+                // Če uporabnik klikne ven, tudi zapremo dialog
+                vm.dismissDialog()
+            },
             title = {
                 Text(
                     text = if (state.isWin) "Bravo! 🎉" else "Konec igre",
@@ -47,7 +47,8 @@ fun GameScreen(
             },
             confirmButton = {
                 Button(onClick = {
-                    showResultDialog = false
+                    // KLJUČNO: Sporočimo ViewModelu, da smo videli dialog
+                    vm.dismissDialog()
                     onEndOk?.invoke()
                 }) { Text("OK") }
             }
@@ -95,6 +96,21 @@ fun GameScreen(
             onBackspace = { vm.onBackspace() },
             onEnter = { vm.onEnter() }
         )
+
+        // --- DODAN GUMB ZA NOVO VAJO ---
+        if (state.isFinished && state.mode == GameMode.PRACTICE) {
+            Spacer(modifier = Modifier.height(16.dp))
+            Button(
+                onClick = { onEndOk?.invoke() },
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = MaterialTheme.colorScheme.primary
+                ),
+                modifier = Modifier.fillMaxWidth(0.5f) // Gumb bo čez pol ekrana
+            ) {
+                Text("Nova vaja \uD83D\uDD04") // Besedilo + ikona
+            }
+            Spacer(modifier = Modifier.height(16.dp))
+        }
     }
 }
 

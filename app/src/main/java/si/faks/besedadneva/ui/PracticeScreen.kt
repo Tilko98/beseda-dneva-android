@@ -5,6 +5,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Text
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable // <--- POMEMBEN IMPORT
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -18,7 +19,9 @@ import si.faks.besedadneva.ui.viewmodel.GameViewModelFactory
 
 @Composable
 fun PracticeScreen(repo: GameRepository) {
-    var requestId by remember { mutableIntStateOf(0) }
+    // SPREMEMBA: Uporabimo rememberSaveable namesto remember
+    var requestId by rememberSaveable { mutableIntStateOf(0) }
+
     var picked by remember { mutableStateOf<String?>(null) }
     var error by remember { mutableStateOf<String?>(null) }
 
@@ -53,7 +56,6 @@ fun PracticeScreen(repo: GameRepository) {
                 mode = GameMode.PRACTICE
             )
 
-            // ✅ key = requestId -> ob novem requestId dobimo NOV ViewModel (reset igre)
             val vm: GameViewModel = viewModel(
                 key = "practice_$requestId",
                 factory = factory
@@ -62,7 +64,7 @@ fun PracticeScreen(repo: GameRepository) {
             GameScreen(
                 vm = vm,
                 onEndOk = {
-                    // ✅ ko klikne OK po koncu igre -> nova beseda + reset VM
+                    // Ko kliknemo OK ali Nova vaja, povečamo ID -> nov ViewModel -> nova beseda
                     requestId++
                 }
             )
