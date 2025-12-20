@@ -11,8 +11,14 @@ import si.faks.besedadneva.data.db.entities.GameEntity
 
 class HistoryViewModel(private val repo: GameRepository) : ViewModel() {
 
-    val games: StateFlow<List<GameEntity>> =
-        repo.getAllGames()
+    // Seznam dnevnih iger
+    val dailyGames: StateFlow<List<GameEntity>> =
+        repo.getHistory("DAILY")
+            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    // Seznam iger za vajo
+    val practiceGames: StateFlow<List<GameEntity>> =
+        repo.getHistory("PRACTICE")
             .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 }
 
