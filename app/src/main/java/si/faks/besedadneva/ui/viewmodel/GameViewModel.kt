@@ -18,8 +18,8 @@ import java.util.Locale
 enum class GameMode { DAILY, PRACTICE }
 
 data class GuessRowUi(
-    val letters: String,   // dolžine 5 (lahko vsebuje ' ')
-    val pattern: String?   // npr. "GYXGX" ali null dokler ni oddano
+    val letters: String,
+    val pattern: String?
 )
 
 data class GameUiState(
@@ -32,7 +32,7 @@ data class GameUiState(
     val isFinished: Boolean,
     val isWin: Boolean,
     val message: String? = null,
-    val keyboard: Map<Char, Char> = emptyMap() // črka -> 'G'/'Y'/'X'
+    val keyboard: Map<Char, Char> = emptyMap()
 )
 
 private fun todayIsoDate(): String {
@@ -42,9 +42,10 @@ private fun todayIsoDate(): String {
 
 class GameViewModel(
     private val repo: GameRepository,
+    private val gameId: String, // <--- NOVO: Unikaten ID igre
     solution: String,
     mode: GameMode = GameMode.DAILY,
-    date: String = todayIsoDate()
+    date: String = todayIsoDate() // To je le za prikaz uporabniku
 ) : ViewModel() {
 
     private val normalizedSolution = solution.trim().uppercase()
@@ -152,7 +153,6 @@ class GameViewModel(
         if (finished) saveGameToDb(nextState)
     }
 
-    // G > Y > X
     private fun computeKeyboard(rows: List<GuessRowUi>): Map<Char, Char> {
         val map = mutableMapOf<Char, Char>()
 
@@ -160,7 +160,6 @@ class GameViewModel(
             if (oldP == null) return true
             if (oldP == 'G') return false
             if (oldP == 'Y') return newP == 'G'
-            // oldP == 'X'
             return newP == 'Y' || newP == 'G'
         }
 
@@ -185,8 +184,11 @@ class GameViewModel(
 
         val attemptsUsed = submitted.size.coerceIn(0, 6)
 
+        // TUKAJ JE KLJUČNA SPREMEMBA:
+        // Namesto s.date (ki je vedno enak za današnji dan), uporabimo gameId.
+        // Če je mode == PRACTICE, bo gameId vseboval timestamp in bo unikaten.
         val game = GameEntity(
-            date = s.date,
+            date = gameId,  // <--- Uporabimo unikaten ID
             mode = s.mode.name,
             solution = s.solution,
             won = s.isWin,
@@ -196,7 +198,7 @@ class GameViewModel(
 
         val guesses = submitted.map { (idx, word, pat) ->
             GuessEntity(
-                gameId = 0, // repo bo nastavil pravi id
+                gameId = 0, // repo bo to uredil (če uporabljaš @Transaction insert)
                 guessIndex = idx,
                 guessWord = word,
                 pattern = pat
@@ -212,11 +214,26 @@ class GameViewModel(
 class GameViewModelFactory(
     private val repo: GameRepository,
     private val solution: String,
-    private val mode: GameMode = GameMode.DAILY,
-    private val date: String = todayIsoDate()
+    private val mode: GameMode
 ) : ViewModelProvider.Factory {
+
     @Suppress("UNCHECKED_CAST")
     override fun <T : ViewModel> create(modelClass: Class<T>): T {
-        return GameViewModel(repo, solution, mode, date) as T
+
+        // Logika za generiranje ID-ja
+        val gameId = if (mode == GameMode.DAILY) {
+            // Daily: Uporabimo datum, da se ohranja 1 igra na dan
+            java.time.LocalDate.now().toString()
+        } else {
+            // Practice: Generiramo unikaten ID s časovnim žigom
+            "practice_${System.currentTimeMillis()}"
+        }
+
+        return GameViewModel(
+            repo = repo,
+            gameId = gameId, // <--- Zdaj pravilno podamo ID
+            solution = solution,
+            mode = mode
+        ) as T
     }
 }

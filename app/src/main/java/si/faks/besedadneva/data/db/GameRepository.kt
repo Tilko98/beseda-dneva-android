@@ -23,4 +23,8 @@ class GameRepository(
         val guessesWithId = guesses.map { it.copy(gameId = gameId) }
         guessDao.insertAll(guessesWithId)
     }
+
+    fun getHistory(mode: String): Flow<List<GameEntity>> {
+        return gameDao.getGamesByMode(mode)
+    }
 }

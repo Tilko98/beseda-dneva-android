@@ -7,6 +7,7 @@ import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavDestination.Companion.hierarchy
@@ -18,8 +19,8 @@ import si.faks.besedadneva.ui.theme.BesedaDnevaTheme
 import si.faks.besedadneva.ui.viewmodel.GameMode
 import si.faks.besedadneva.ui.viewmodel.GameViewModel
 import si.faks.besedadneva.ui.viewmodel.GameViewModelFactory
-import androidx.compose.runtime.getValue
-
+import si.faks.besedadneva.ui.viewmodel.HistoryViewModel
+import si.faks.besedadneva.ui.viewmodel.HistoryViewModelFactory
 
 sealed class BottomRoute(val route: String, val label: String) {
     data object Daily : BottomRoute("daily", "Daily")
@@ -67,7 +68,7 @@ private fun AppScaffold(repo: GameRepository) {
             composable(BottomRoute.Daily.route) {
                 val factory = GameViewModelFactory(
                     repo = repo,
-                    solution = "MIZA?", // za zdaj hardcoded (kasneje daily beseda iz baze)
+                    solution = "MIZA?", // za zdaj hardcoded
                     mode = GameMode.DAILY
                 )
                 val vm: GameViewModel = viewModel(factory = factory)
@@ -75,7 +76,16 @@ private fun AppScaffold(repo: GameRepository) {
             }
 
             composable(BottomRoute.Practice.route) { PracticeScreen(repo) }
-            composable(BottomRoute.History.route) { HistoryScreen() }
+
+            // --- TUKAJ JE SPREMEMBA ---
+            composable(BottomRoute.History.route) {
+                // Ustvarimo ViewModel s Factory-jem in ga podamo naprej
+                val factory = HistoryViewModelFactory(repo)
+                val vm: HistoryViewModel = viewModel(factory = factory)
+                HistoryScreen(viewModel = vm)
+            }
+            // --------------------------
+
             composable(BottomRoute.Profile.route) { ProfileScreen() }
         }
     }

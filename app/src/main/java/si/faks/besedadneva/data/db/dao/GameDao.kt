@@ -35,4 +35,8 @@ interface GameDao {
         LIMIT 30
     """)
     fun getLast30Daily(): Flow<List<GameEntity>>
+
+    //  LOCIMO DAILY IN VAJO
+    @Query("SELECT * FROM games WHERE mode = :mode ORDER BY finishedAtMillis DESC")
+    fun getGamesByMode(mode: String): Flow<List<GameEntity>>
 }
