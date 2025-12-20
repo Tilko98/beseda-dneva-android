@@ -3,13 +3,16 @@ package si.faks.besedadneva.ui.viewmodel
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import si.faks.besedadneva.data.db.GameRepository
 import si.faks.besedadneva.data.db.entities.GameEntity
 import si.faks.besedadneva.data.db.entities.GuessEntity
+import si.faks.besedadneva.data.fran.WordValidator
 import si.faks.besedadneva.wordle.evaluateGuessPattern
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -18,8 +21,8 @@ import java.util.Locale
 enum class GameMode { DAILY, PRACTICE }
 
 data class GuessRowUi(
-    val letters: String,   // dolžine 5 (lahko vsebuje ' ')
-    val pattern: String?   // npr. "GYXGX" ali null dokler ni oddano
+    val letters: String,   // dolžina 5, vsebuje ' ' za prazno
+    val pattern: String?   // npr. "GYXGX", ali null dokler ni oddano
 )
 
 data class GameUiState(
@@ -47,6 +50,7 @@ class GameViewModel(
     date: String = todayIsoDate()
 ) : ViewModel() {
 
+    private val validator = WordValidator()
     private val normalizedSolution = solution.trim().uppercase()
 
     private val _state = MutableStateFlow(
@@ -118,17 +122,48 @@ class GameViewModel(
         if (s.currentRowIndex !in 0..5) return
 
         val row = s.rows[s.currentRowIndex]
-        val guess = row.letters.replace(" ", "")
+        val guessCompact = row.letters.replace(" ", "")
 
-        if (guess.length != 5) {
+        if (guessCompact.length != 5) {
             _state.value = s.copy(message = "Vnesi 5 črk.")
             return
         }
 
+        val guess = guessCompact.uppercase()
+
+        // ✅ VALIDACIJA prek SSKJ/Fran
+        viewModelScope.launch {
+            _state.value = _state.value.copy(message = "Preverjam v SSKJ...")
+
+            val ok = withContext(Dispatchers.IO) {
+                validator.existsInSSKJ(guess)
+            }
+
+            if (!ok) {
+                // Pobriši trenutni row in dovoli ponovno tipkanje
+                val st = _state.value
+                val clearedRows = st.rows.toMutableList().apply {
+                    this[st.currentRowIndex] = GuessRowUi(letters = "     ", pattern = null)
+                }
+                _state.value = st.copy(
+                    rows = clearedRows,
+                    currentColIndex = 0,
+                    message = "Ni v SSKJ. Poskusi znova."
+                )
+                return@launch
+            }
+
+            // Če ok → normalna Wordle logika
+            applyGuess(guess)
+        }
+    }
+
+    private fun applyGuess(guess: String) {
+        val s = _state.value
         val pattern = evaluateGuessPattern(guess, s.solution)
 
         val updatedRows = s.rows.toMutableList().apply {
-            this[s.currentRowIndex] = row.copy(pattern = pattern)
+            this[s.currentRowIndex] = this[s.currentRowIndex].copy(pattern = pattern)
         }
 
         val keyboard = computeKeyboard(updatedRows)
@@ -160,8 +195,7 @@ class GameViewModel(
             if (oldP == null) return true
             if (oldP == 'G') return false
             if (oldP == 'Y') return newP == 'G'
-            // oldP == 'X'
-            return newP == 'Y' || newP == 'G'
+            return newP == 'Y' || newP == 'G' // oldP == 'X'
         }
 
         rows.forEach { r ->
@@ -203,8 +237,13 @@ class GameViewModel(
             )
         }
 
-        viewModelScope.launch {
+        viewModelScope.launch(Dispatchers.IO) {
+            // ✅ če imaš to metodo v repo
             repo.saveFinishedGame(game, guesses)
+
+            // Če NIMAŠ saveFinishedGame, uporabi tole (odkomentiraj):
+            // val id = repo.insertGame(game)
+            // guesses.forEach { g -> repo.insertGuess(g.copy(gameId = id)) }
         }
     }
 }
