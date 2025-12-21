@@ -15,12 +15,14 @@ import androidx.navigation.compose.*
 import si.faks.besedadneva.data.db.DatabaseProvider
 import si.faks.besedadneva.data.db.GameRepository
 import si.faks.besedadneva.ui.*
+import si.faks.besedadneva.ui.auth.GoogleAuthClient // <--- Uvozili smo tvoj novi razred
 import si.faks.besedadneva.ui.theme.BesedaDnevaTheme
 import si.faks.besedadneva.ui.viewmodel.GameMode
 import si.faks.besedadneva.ui.viewmodel.GameViewModel
 import si.faks.besedadneva.ui.viewmodel.GameViewModelFactory
 import si.faks.besedadneva.ui.viewmodel.HistoryViewModel
 import si.faks.besedadneva.ui.viewmodel.HistoryViewModelFactory
+import com.google.firebase.FirebaseApp
 
 sealed class BottomRoute(val route: String, val label: String) {
     data object Daily : BottomRoute("daily", "Daily")
@@ -30,8 +32,15 @@ sealed class BottomRoute(val route: String, val label: String) {
 }
 
 class MainActivity : ComponentActivity() {
+
+    // 1. Inicializiramo GoogleAuthClient
+    private val googleAuthClient by lazy {
+        GoogleAuthClient(applicationContext)
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        FirebaseApp.initializeApp(this)
         enableEdgeToEdge()
 
         val db = DatabaseProvider.get(applicationContext)
@@ -39,14 +48,18 @@ class MainActivity : ComponentActivity() {
 
         setContent {
             BesedaDnevaTheme {
-                AppScaffold(repo = repo)
+                // 2. Podamo ga naprej v AppScaffold
+                AppScaffold(repo = repo, googleAuthClient = googleAuthClient)
             }
         }
     }
 }
 
 @Composable
-private fun AppScaffold(repo: GameRepository) {
+private fun AppScaffold(
+    repo: GameRepository,
+    googleAuthClient: GoogleAuthClient // 3. Dodan parameter
+) {
     val navController = rememberNavController()
     val items = listOf(
         BottomRoute.Daily,
@@ -77,16 +90,17 @@ private fun AppScaffold(repo: GameRepository) {
 
             composable(BottomRoute.Practice.route) { PracticeScreen(repo) }
 
-            // --- TUKAJ JE SPREMEMBA ---
             composable(BottomRoute.History.route) {
-                // Ustvarimo ViewModel s Factory-jem in ga podamo naprej
                 val factory = HistoryViewModelFactory(repo)
                 val vm: HistoryViewModel = viewModel(factory = factory)
                 HistoryScreen(viewModel = vm)
             }
-            // --------------------------
 
-            composable(BottomRoute.Profile.route) { ProfileScreen() }
+            // 4. Podamo googleAuthClient v ProfileScreen
+            composable(BottomRoute.Profile.route) {
+                ProfileScreen(googleAuthClient = googleAuthClient,
+                    repo = repo)
+            }
         }
     }
 }

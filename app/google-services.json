@@ -1,0 +1,76 @@
+{
+  "project_info": {
+    "project_number": "947618035144",
+    "project_id": "besedadneva-5f0e8",
+    "storage_bucket": "besedadneva-5f0e8.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:947618035144:android:a685311821ebb79be0fcfd",
+        "android_client_info": {
+          "package_name": "si.faks.besedaDneva"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "947618035144-m8b6nqdplk7uh3niid3es6lt4abcogon.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyB_FYkDFX8_XT0HbT3Pp3AQg_vBh14wy0E"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "947618035144-m8b6nqdplk7uh3niid3es6lt4abcogon.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
+        }
+      }
+    },
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:947618035144:android:3bc86a1fdbdeaa8ee0fcfd",
+        "android_client_info": {
+          "package_name": "si.faks.besedadneva"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "947618035144-8sfqvkikhc650uh27t9u5kbd5jg22pgh.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "si.faks.besedadneva",
+            "certificate_hash": "6795e8ddfc487007c1961528fe45c18df0e9f6c3"
+          }
+        },
+        {
+          "client_id": "947618035144-m8b6nqdplk7uh3niid3es6lt4abcogon.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyB_FYkDFX8_XT0HbT3Pp3AQg_vBh14wy0E"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "947618035144-m8b6nqdplk7uh3niid3es6lt4abcogon.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
