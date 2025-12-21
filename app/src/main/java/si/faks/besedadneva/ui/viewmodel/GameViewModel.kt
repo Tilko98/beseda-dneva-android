@@ -3,13 +3,17 @@ package si.faks.besedadneva.ui.viewmodel
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import si.faks.besedadneva.data.db.GameRepository
 import si.faks.besedadneva.data.db.entities.GameEntity
 import si.faks.besedadneva.data.db.entities.GuessEntity
+import si.faks.besedadneva.data.fran.WordValidator
 import si.faks.besedadneva.wordle.evaluateGuessPattern
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -32,8 +36,9 @@ data class GameUiState(
     val isFinished: Boolean,
     val isWin: Boolean,
     val message: String? = null,
-    val isDialogShown: Boolean = false, // To obdržimo!
-    val keyboard: Map<Char, Char> = emptyMap()
+    val isDialogShown: Boolean = false,
+    val keyboard: Map<Char, Char> = emptyMap(),
+    val isLoading: Boolean = false // Novo: za indikator nalaganja med preverjanjem na Fran.si
 )
 
 private fun todayIsoDate(): String {
@@ -43,15 +48,14 @@ private fun todayIsoDate(): String {
 
 class GameViewModel(
     private val repo: GameRepository,
-    private val gameId: String, // Uporabimo kar to, ker je za vsako vajo nova instanca
+    private val gameId: String,
     solution: String,
     mode: GameMode = GameMode.DAILY,
     date: String = todayIsoDate()
 ) : ViewModel() {
 
     private val normalizedSolution = solution.trim().uppercase()
-
-    // IZBRISANO: private var currentGameId ... (ni več potrebno)
+    private val wordValidator = WordValidator() // Instanca za preverjanje SSKJ
 
     private val _state = MutableStateFlow(
         GameUiState(
@@ -69,15 +73,13 @@ class GameViewModel(
     )
     val state: StateFlow<GameUiState> = _state.asStateFlow()
 
-    // IZBRISANO: fun startNewGame() ... (ni več potrebno, ker to ureja PracticeScreen)
-
     fun dismissDialog() {
         _state.value = _state.value.copy(isDialogShown = true)
     }
 
     fun onLetter(ch: Char) {
         val s = _state.value
-        if (s.isFinished) return
+        if (s.isFinished || s.isLoading) return
         if (s.currentRowIndex !in 0..5) return
         if (s.currentColIndex !in 0..4) return
 
@@ -99,7 +101,7 @@ class GameViewModel(
 
     fun onBackspace() {
         val s = _state.value
-        if (s.isFinished) return
+        if (s.isFinished || s.isLoading) return
         if (s.currentRowIndex !in 0..5) return
         if (s.currentColIndex <= 0) return
 
@@ -121,7 +123,7 @@ class GameViewModel(
 
     fun onEnter() {
         val s = _state.value
-        if (s.isFinished) return
+        if (s.isFinished || s.isLoading) return
         if (s.currentRowIndex !in 0..5) return
 
         val row = s.rows[s.currentRowIndex]
@@ -131,28 +133,45 @@ class GameViewModel(
             _state.value = s.copy(message = "Vnesi 5 črk.")
             return
         }
-        val pattern = evaluateGuessPattern(guess, s.solution)
-        val updatedRows = s.rows.toMutableList().apply {
-            this[s.currentRowIndex] = row.copy(pattern = pattern)
+
+        // --- NOVO: Preverjanje validnosti besede ---
+        viewModelScope.launch(Dispatchers.IO) {
+            _state.update { it.copy(isLoading = true, message = "Preverjam...") }
+
+            val isValid = wordValidator.existsInSSKJ(guess)
+
+            withContext(Dispatchers.Main) {
+                if (!isValid) {
+                    _state.update { it.copy(isLoading = false, message = "Besede '$guess' ni v slovarju!") }
+                    return@withContext
+                }
+
+                // Beseda je validna, nadaljujemo z Wordle logiko
+                val pattern = evaluateGuessPattern(guess, s.solution)
+                val updatedRows = s.rows.toMutableList().apply {
+                    this[s.currentRowIndex] = row.copy(pattern = pattern)
+                }
+                val keyboard = computeKeyboard(updatedRows)
+                val win = pattern.all { it == 'G' }
+                val lastRow = s.currentRowIndex == 5
+                val finished = win || lastRow
+
+                val nextState = s.copy(
+                    rows = updatedRows,
+                    keyboard = keyboard,
+                    currentRowIndex = if (!finished) s.currentRowIndex + 1 else s.currentRowIndex,
+                    currentColIndex = if (!finished) 0 else s.currentColIndex,
+                    isFinished = finished,
+                    isWin = win,
+                    message = if (finished) (if (win) "Bravo! 🎉" else "Konec igre. Rešitev: ${s.solution}") else null,
+                    isDialogShown = false,
+                    isLoading = false
+                )
+
+                _state.value = nextState
+                if (finished) saveGameToDb(nextState)
+            }
         }
-        val keyboard = computeKeyboard(updatedRows)
-        val win = pattern.all { it == 'G' }
-        val lastRow = s.currentRowIndex == 5
-        val finished = win || lastRow
-
-        val nextState = s.copy(
-            rows = updatedRows,
-            keyboard = keyboard,
-            currentRowIndex = if (!finished) s.currentRowIndex + 1 else s.currentRowIndex,
-            currentColIndex = if (!finished) 0 else s.currentColIndex,
-            isFinished = finished,
-            isWin = win,
-            message = if (finished) (if (win) "Bravo! 🎉" else "Konec igre.") else null,
-            isDialogShown = false
-        )
-
-        _state.value = nextState
-        if (finished) saveGameToDb(nextState)
     }
 
     private fun computeKeyboard(rows: List<GuessRowUi>): Map<Char, Char> {
@@ -185,7 +204,7 @@ class GameViewModel(
         val attemptsUsed = submitted.size.coerceIn(0, 6)
 
         val game = GameEntity(
-            date = gameId, // TU SPREMEMBA: Uporabimo kar gameId iz konstruktorja
+            date = gameId,
             mode = s.mode.name,
             solution = s.solution,
             won = s.isWin,
@@ -208,7 +227,6 @@ class GameViewModel(
     }
 }
 
-// Factory ostane enak
 class GameViewModelFactory(
     private val repo: GameRepository,
     private val solution: String,
@@ -217,7 +235,6 @@ class GameViewModelFactory(
 
     @Suppress("UNCHECKED_CAST")
     override fun <T : ViewModel> create(modelClass: Class<T>): T {
-
         val gameId = if (mode == GameMode.DAILY) {
             val sdf = SimpleDateFormat("yyyy-MM-dd", Locale.US)
             sdf.format(Date())
