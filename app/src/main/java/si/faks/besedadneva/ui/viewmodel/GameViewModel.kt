@@ -4,9 +4,11 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -14,7 +16,8 @@ import si.faks.besedadneva.data.db.GameRepository
 import si.faks.besedadneva.data.db.entities.GameEntity
 import si.faks.besedadneva.data.db.entities.GuessEntity
 import si.faks.besedadneva.data.fran.WordValidator
-import si.faks.besedadneva.wordle.evaluateGuessPattern
+import si.faks.besedadneva.wordle.LetterState
+import si.faks.besedadneva.wordle.evaluateGuessStates
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -36,33 +39,31 @@ data class GameUiState(
     val isFinished: Boolean,
     val isWin: Boolean,
     val message: String? = null,
-    val isDialogShown: Boolean = false,
-    val keyboard: Map<Char, Char> = emptyMap(),
-    val isLoading: Boolean = false // Novo: za indikator nalaganja med preverjanjem na Fran.si
+    val isDialogShown: Boolean
 )
-
-private fun todayIsoDate(): String {
-    val fmt = SimpleDateFormat("yyyy-MM-dd", Locale.US)
-    return fmt.format(Date())
-}
 
 class GameViewModel(
     private val repo: GameRepository,
-    private val gameId: String,
-    solution: String,
-    mode: GameMode = GameMode.DAILY,
-    date: String = todayIsoDate()
+    private val solution: String,
+    private val mode: GameMode
 ) : ViewModel() {
 
-    private val normalizedSolution = solution.trim().uppercase()
-    private val wordValidator = WordValidator() // Instanca za preverjanje SSKJ
+    private val gameId: String = if (mode == GameMode.DAILY) {
+        val sdf = SimpleDateFormat("yyyy-MM-dd", Locale.US)
+        sdf.format(Date())
+    } else {
+        "practice_${System.currentTimeMillis()}"
+    }
+
+    private val wordLength = solution.length
+    private val maxRows = wordLength + 1
 
     private val _state = MutableStateFlow(
         GameUiState(
-            date = date,
+            date = gameId,
             mode = mode,
-            solution = normalizedSolution,
-            rows = List(6) { GuessRowUi(letters = "     ", pattern = null) },
+            solution = solution,
+            rows = List(maxRows) { GuessRowUi("", null) },
             currentRowIndex = 0,
             currentColIndex = 0,
             isFinished = false,
@@ -73,135 +74,122 @@ class GameViewModel(
     )
     val state: StateFlow<GameUiState> = _state.asStateFlow()
 
-    fun dismissDialog() {
-        _state.value = _state.value.copy(isDialogShown = true)
-    }
+    private val _shakeEvent = Channel<Unit>()
+    val shakeEvent = _shakeEvent.receiveAsFlow()
 
-    fun onLetter(ch: Char) {
+    fun onLetter(char: Char) {
         val s = _state.value
-        if (s.isFinished || s.isLoading) return
-        if (s.currentRowIndex !in 0..5) return
-        if (s.currentColIndex !in 0..4) return
+        if (s.isFinished) return
+        if (s.currentColIndex >= wordLength) return
 
-        val upper = ch.uppercaseChar()
-        val row = s.rows[s.currentRowIndex]
-        val updatedLetters = row.letters.toCharArray().apply {
-            this[s.currentColIndex] = upper
-        }.concatToString()
-
-        val updatedRows = s.rows.toMutableList().apply {
-            this[s.currentRowIndex] = row.copy(letters = updatedLetters)
+        val rows = s.rows.toMutableList()
+        val currentLetters = rows[s.currentRowIndex].letters
+        if (currentLetters.length < wordLength) {
+            rows[s.currentRowIndex] = rows[s.currentRowIndex].copy(letters = currentLetters + char)
+            _state.update {
+                it.copy(
+                    rows = rows,
+                    currentColIndex = it.currentColIndex + 1
+                )
+            }
         }
-        _state.value = s.copy(
-            rows = updatedRows,
-            currentColIndex = s.currentColIndex + 1,
-            message = null
-        )
     }
 
     fun onBackspace() {
         val s = _state.value
-        if (s.isFinished || s.isLoading) return
-        if (s.currentRowIndex !in 0..5) return
+        if (s.isFinished) return
         if (s.currentColIndex <= 0) return
 
-        val newCol = s.currentColIndex - 1
-        val row = s.rows[s.currentRowIndex]
-        val updatedLetters = row.letters.toCharArray().apply {
-            this[newCol] = ' '
-        }.concatToString()
-
-        val updatedRows = s.rows.toMutableList().apply {
-            this[s.currentRowIndex] = row.copy(letters = updatedLetters)
+        val rows = s.rows.toMutableList()
+        val currentLetters = rows[s.currentRowIndex].letters
+        if (currentLetters.isNotEmpty()) {
+            rows[s.currentRowIndex] = rows[s.currentRowIndex].copy(letters = currentLetters.dropLast(1))
+            _state.update {
+                it.copy(
+                    rows = rows,
+                    currentColIndex = it.currentColIndex - 1
+                )
+            }
         }
-        _state.value = s.copy(
-            rows = updatedRows,
-            currentColIndex = newCol,
-            message = null
-        )
     }
 
     fun onEnter() {
         val s = _state.value
-        if (s.isFinished || s.isLoading) return
-        if (s.currentRowIndex !in 0..5) return
+        if (s.isFinished) return
 
-        val row = s.rows[s.currentRowIndex]
-        val guess = row.letters.replace(" ", "")
+        val currentRow = s.rows[s.currentRowIndex]
+        val guessWord = currentRow.letters.trim()
 
-        if (guess.length != 5) {
-            _state.value = s.copy(message = "Vnesi 5 črk.")
+        if (guessWord.length < wordLength) {
+            viewModelScope.launch { _shakeEvent.send(Unit) }
+            showMessage("Premalo črk")
             return
         }
 
-        // --- NOVO: Preverjanje validnosti besede ---
-        viewModelScope.launch(Dispatchers.IO) {
-            _state.update { it.copy(isLoading = true, message = "Preverjam...") }
+        viewModelScope.launch {
+            val isValid = withContext(Dispatchers.IO) {
+                WordValidator().existsInSSKJ(guessWord)
+            }
 
-            val isValid = wordValidator.existsInSSKJ(guess)
+            if (!isValid) {
+                _shakeEvent.send(Unit)
+                showMessage("Beseda ne obstaja!")
+                return@launch
+            }
 
-            withContext(Dispatchers.Main) {
-                if (!isValid) {
-                    _state.update { it.copy(isLoading = false, message = "Besede '$guess' ni v slovarju!") }
-                    return@withContext
+            val states = evaluateGuessStates(guessWord, s.solution)
+            val patternString = states.joinToString("") { state ->
+                when (state) {
+                    LetterState.CORRECT -> "G"
+                    LetterState.PRESENT -> "Y"
+                    LetterState.ABSENT -> "X"
                 }
+            }
 
-                // Beseda je validna, nadaljujemo z Wordle logiko
-                val pattern = evaluateGuessPattern(guess, s.solution)
-                val updatedRows = s.rows.toMutableList().apply {
-                    this[s.currentRowIndex] = row.copy(pattern = pattern)
-                }
-                val keyboard = computeKeyboard(updatedRows)
-                val win = pattern.all { it == 'G' }
-                val lastRow = s.currentRowIndex == 5
-                val finished = win || lastRow
+            val newRows = s.rows.toMutableList()
+            newRows[s.currentRowIndex] = currentRow.copy(pattern = patternString)
 
-                val nextState = s.copy(
-                    rows = updatedRows,
-                    keyboard = keyboard,
-                    currentRowIndex = if (!finished) s.currentRowIndex + 1 else s.currentRowIndex,
-                    currentColIndex = if (!finished) 0 else s.currentColIndex,
-                    isFinished = finished,
-                    isWin = win,
-                    message = if (finished) (if (win) "Bravo! 🎉" else "Konec igre. Rešitev: ${s.solution}") else null,
-                    isDialogShown = false,
-                    isLoading = false
+            val isWin = (guessWord.uppercase() == s.solution.uppercase())
+            val isLastTry = (s.currentRowIndex == maxRows - 1)
+            val isFinished = isWin || isLastTry
+
+            _state.update {
+                it.copy(
+                    rows = newRows,
+                    isFinished = isFinished,
+                    isWin = isWin,
+                    currentRowIndex = if (isFinished) it.currentRowIndex else it.currentRowIndex + 1,
+                    currentColIndex = if (isFinished) it.currentColIndex else 0,
+                    // TU JE POPRAVEK: Ko je konec, pokaži dialog
+                    isDialogShown = isFinished
                 )
+            }
 
-                _state.value = nextState
-                if (finished) saveGameToDb(nextState)
+            if (isFinished) {
+                saveGameResult()
             }
         }
     }
 
-    private fun computeKeyboard(rows: List<GuessRowUi>): Map<Char, Char> {
-        val map = mutableMapOf<Char, Char>()
-        fun better(newP: Char, oldP: Char?): Boolean {
-            if (oldP == null) return true
-            if (oldP == 'G') return false
-            if (oldP == 'Y') return newP == 'G'
-            return newP == 'Y' || newP == 'G'
-        }
-        rows.forEach { r ->
-            val pat = r.pattern ?: return@forEach
-            for (i in 0 until 5) {
-                val ch = r.letters[i]
-                if (ch == ' ') continue
-                val p = pat[i]
-                val prev = map[ch]
-                if (better(p, prev)) map[ch] = p
-            }
-        }
-        return map
+    fun dismissDialog() {
+        _state.update { it.copy(isDialogShown = false) }
     }
 
-    private fun saveGameToDb(s: GameUiState) {
+    fun clearMessage() {
+        _state.update { it.copy(message = null) }
+    }
+
+    private fun showMessage(msg: String) {
+        _state.update { it.copy(message = msg) }
+    }
+
+    private fun saveGameResult() {
+        val s = _state.value
         val submitted = s.rows.mapIndexedNotNull { idx, r ->
             val pat = r.pattern ?: return@mapIndexedNotNull null
             Triple(idx, r.letters.replace(" ", ""), pat)
         }
-
-        val attemptsUsed = submitted.size.coerceIn(0, 6)
+        val attemptsUsed = submitted.size
 
         val game = GameEntity(
             date = gameId,
@@ -235,18 +223,6 @@ class GameViewModelFactory(
 
     @Suppress("UNCHECKED_CAST")
     override fun <T : ViewModel> create(modelClass: Class<T>): T {
-        val gameId = if (mode == GameMode.DAILY) {
-            val sdf = SimpleDateFormat("yyyy-MM-dd", Locale.US)
-            sdf.format(Date())
-        } else {
-            "practice_${System.currentTimeMillis()}"
-        }
-
-        return GameViewModel(
-            repo = repo,
-            gameId = gameId,
-            solution = solution,
-            mode = mode
-        ) as T
+        return GameViewModel(repo, solution, mode) as T
     }
 }
