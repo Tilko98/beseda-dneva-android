@@ -4,8 +4,10 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.google.firebase.auth.FirebaseAuth
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.tasks.await
@@ -18,7 +20,8 @@ data class ProfileState(
     val signInError: String? = null,
     val userData: UserData? = null,
     val totalGames: Int = 0,
-    val wins: Int = 0
+    val wins: Int = 0,
+    val winDistribution: Map<Int, Int> = emptyMap()
 )
 
 class ProfileViewModel(private val repo: GameRepository) : ViewModel() {
@@ -27,33 +30,55 @@ class ProfileViewModel(private val repo: GameRepository) : ViewModel() {
 
     private val auth = FirebaseAuth.getInstance()
 
+    // Hranimo referenco na opravilo (Job) zbiranja statistike, da ga lahko resetiramo
+    private var statsJob: Job? = null
+
     init {
+        // Naložimo statistiko ob zagonu
         loadStats()
-        // Ob zagonu preverimo, če je uporabnik že prijavljen preko Firebase
+
         val currentUser = auth.currentUser
         if (currentUser != null) {
             setInitialUser(
                 UserData(
                     userId = currentUser.uid,
                     username = currentUser.email ?: "Uporabnik",
-                    profilePictureUrl = null
+                    profilePictureUrl = currentUser.photoUrl?.toString()
                 )
             )
         }
     }
 
     private fun loadStats() {
-        viewModelScope.launch {
-            repo.getAllGames().collect { games ->
-                _state.update { it.copy(
-                    totalGames = games.size,
-                    wins = games.count { g -> g.won }
-                ) }
+        // 1. Prekličemo prejšnje zbiranje (npr. če smo zamenjali uporabnika)
+        statsJob?.cancel()
+
+        // 2. Zaženemo novo zbiranje
+        statsJob = viewModelScope.launch {
+            // repo.getAllGames() bo zdaj preveril trenutni auth.currentUser
+            // in vrnil ustrezen Flow (Cloud ali Local)
+            repo.getAllGames().collectLatest { games ->
+                val total = games.size
+                val wins = games.count { it.won }
+
+                val distMap = games
+                    .filter { it.won }
+                    .groupBy { it.attemptsUsed }
+                    .mapValues { entry -> entry.value.size }
+
+                val finalDist = (1..6).associateWith { distMap[it] ?: 0 }
+
+                _state.update {
+                    it.copy(
+                        totalGames = total,
+                        wins = wins,
+                        winDistribution = finalDist
+                    )
+                }
             }
         }
     }
 
-    // --- NOVO: Prijava z e-pošto ---
     fun signInWithEmail(email: String, pass: String) {
         if (email.isBlank() || pass.isBlank()) {
             _state.update { it.copy(signInError = "Vnesi e-pošto in geslo") }
@@ -62,15 +87,15 @@ class ProfileViewModel(private val repo: GameRepository) : ViewModel() {
 
         viewModelScope.launch {
             try {
-                val result = auth.signInWithEmailAndPassword(email, pass).await()
-                val user = result.user
+                auth.signInWithEmailAndPassword(email, pass).await()
+                val user = auth.currentUser
                 if (user != null) {
-                    val userData = UserData(
-                        userId = user.uid,
-                        username = user.email,
-                        profilePictureUrl = null
+                    onSignInResult(
+                        SignInResult(
+                            data = UserData(user.uid, user.email, user.photoUrl?.toString()),
+                            errorMessage = null
+                        )
                     )
-                    _state.update { it.copy(userData = userData, isSignInSuccessful = true, signInError = null) }
                 }
             } catch (e: Exception) {
                 _state.update { it.copy(signInError = "Napaka pri prijavi: ${e.localizedMessage}") }
@@ -78,7 +103,6 @@ class ProfileViewModel(private val repo: GameRepository) : ViewModel() {
         }
     }
 
-    // --- NOVO: Registracija z e-pošto ---
     fun signUpWithEmail(email: String, pass: String) {
         if (email.isBlank() || pass.isBlank()) {
             _state.update { it.copy(signInError = "Vnesi e-pošto in geslo") }
@@ -88,7 +112,6 @@ class ProfileViewModel(private val repo: GameRepository) : ViewModel() {
         viewModelScope.launch {
             try {
                 auth.createUserWithEmailAndPassword(email, pass).await()
-                // Po uspešni registraciji se uporabnik avtomatsko prijavi
                 signInWithEmail(email, pass)
             } catch (e: Exception) {
                 _state.update { it.copy(signInError = "Napaka pri registraciji: ${e.localizedMessage}") }
@@ -97,21 +120,34 @@ class ProfileViewModel(private val repo: GameRepository) : ViewModel() {
     }
 
     fun onSignInResult(result: SignInResult) {
-        _state.update { it.copy(
-            isSignInSuccessful = result.data != null,
-            signInError = result.errorMessage,
-            userData = result.data
-        ) }
+        _state.update {
+            it.copy(
+                isSignInSuccessful = result.data != null,
+                signInError = result.errorMessage,
+                userData = result.data
+            )
+        }
+        // KLJUČNO: Ko se uspešno prijavimo, osvežimo statistiko (preklop na Cloud)
+        if (result.data != null) {
+            loadStats()
+        }
     }
 
     fun onSignOut() {
-        auth.signOut() // Odjava iz Firebase
-        _state.update { ProfileState(totalGames = it.totalGames, wins = it.wins) }
+        auth.signOut()
+
+        // Resetiramo stanje na začetno (prazno)
+        _state.update { ProfileState() }
+
+        // KLJUČNO: Ko se odjavimo, osvežimo statistiko (preklop nazaj na Local)
+        loadStats()
     }
 
     fun setInitialUser(userData: UserData?) {
         if (userData != null) {
             _state.update { it.copy(userData = userData, isSignInSuccessful = true) }
+            // Opomba: loadStats() je že poklican v init{}, kjer auth.currentUser že obstaja,
+            // zato tukaj ni nujno ponovno klicati, a ne škodi.
         }
     }
 }

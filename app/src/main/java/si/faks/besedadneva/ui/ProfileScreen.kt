@@ -1,18 +1,13 @@
 package si.faks.besedadneva.ui
 
-import android.app.Activity
-import android.widget.Toast
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.IntentSenderRequest
-import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
@@ -31,128 +26,90 @@ fun ProfileScreen(
     viewModel: ProfileViewModel = viewModel(factory = ProfileViewModelFactory(repo))
 ) {
     val state by viewModel.state.collectAsState()
-    val context = LocalContext.current
     val scope = rememberCoroutineScope()
 
-    // Stanja za Email/Password prijavo
     var email by remember { mutableStateOf("") }
     var password by remember { mutableStateOf("") }
 
-    val launcher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.StartIntentSenderForResult(),
-        onResult = { result ->
-            if (result.resultCode == Activity.RESULT_OK) {
-                scope.launch {
-                    val signInResult = googleAuthClient.signInWithIntent(result.data ?: return@launch)
-                    viewModel.onSignInResult(signInResult)
-                }
-            }
-        }
-    )
-
-    // Prikaz napak preko Toast sporočil
-    LaunchedEffect(state.signInError) {
-        state.signInError?.let { error ->
-            Toast.makeText(context, error, Toast.LENGTH_LONG).show()
-        }
-    }
-
     Column(
-        modifier = Modifier.fillMaxSize().padding(24.dp),
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(16.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        Text("Moj Profil", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
+        Text("Profil & Statistika", fontSize = 24.sp, fontWeight = FontWeight.Bold)
+
         Spacer(Modifier.height(24.dp))
 
-        if (state.userData != null) {
-            val user = state.userData!!
-            Card(
-                modifier = Modifier.fillMaxWidth(),
-                elevation = CardDefaults.cardElevation(4.dp)
-            ) {
-                Row(modifier = Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Surface(
-                        modifier = Modifier.size(60.dp),
-                        shape = CircleShape,
-                        color = MaterialTheme.colorScheme.primaryContainer
-                    ) {
-                        Box(contentAlignment = Alignment.Center) {
-                            Text(user.username?.firstOrNull()?.toString() ?: "?", fontSize = 24.sp)
-                        }
-                    }
-                    Spacer(Modifier.width(16.dp))
-                    Column {
-                        Text(user.username ?: "Neznanec", fontWeight = FontWeight.Bold, fontSize = 20.sp)
-                        Text(user.userId.take(10) + "...", fontSize = 12.sp, color = Color.Gray)
-                    }
-                }
-            }
+        if (state.isSignInSuccessful && state.userData != null) {
+            Text("Pozdravljen, ${state.userData?.username ?: "Uporabnik"}!")
+            Spacer(Modifier.height(8.dp))
         } else {
-            // --- PRIJAVA Z EMAILOM IN GESLOM ---
             OutlinedTextField(
                 value = email,
                 onValueChange = { email = it },
                 label = { Text("E-pošta") },
-                modifier = Modifier.fillMaxWidth(),
-                singleLine = true
+                modifier = Modifier.fillMaxWidth()
             )
             Spacer(Modifier.height(8.dp))
             OutlinedTextField(
                 value = password,
                 onValueChange = { password = it },
                 label = { Text("Geslo") },
-                modifier = Modifier.fillMaxWidth(),
                 visualTransformation = PasswordVisualTransformation(),
-                singleLine = true
+                modifier = Modifier.fillMaxWidth()
             )
             Spacer(Modifier.height(16.dp))
-
-            Button(
-                onClick = { viewModel.signInWithEmail(email, password) },
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Text("Prijava z geslom")
+            Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                Button(onClick = { viewModel.signInWithEmail(email, password) }) {
+                    Text("Prijava")
+                }
+                OutlinedButton(onClick = { viewModel.signUpWithEmail(email, password) }) {
+                    Text("Registracija")
+                }
             }
 
-            TextButton(onClick = { viewModel.signUpWithEmail(email, password) }) {
-                Text("Nimaš računa? Registriraj se")
+            if (state.signInError != null) {
+                Spacer(Modifier.height(8.dp))
+                Text(state.signInError!!, color = Color.Red, fontSize = 14.sp)
             }
 
-            Spacer(Modifier.height(16.dp))
-            HorizontalDivider()
-            Spacer(Modifier.height(16.dp))
-
-            // --- PRIJAVA Z GOOGLE ---
-            Button(
-                onClick = {
-                    scope.launch {
-                        val intentSender = googleAuthClient.signIn()
-                        launcher.launch(IntentSenderRequest.Builder(intentSender ?: return@launch).build())
-                    }
-                },
-                modifier = Modifier.fillMaxWidth(),
-                colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.secondary)
-            ) {
-                Text("Prijava z Google računom")
-            }
+            Spacer(Modifier.height(24.dp))
+            Divider()
+            Spacer(Modifier.height(24.dp))
         }
 
-        Spacer(Modifier.height(32.dp))
+        // --- STATISTIKA (Spremenjen naslov) ---
+        Text(
+            text = "Skupna Statistika (Vse igre)",
+            fontSize = 20.sp,
+            fontWeight = FontWeight.SemiBold,
+            modifier = Modifier.align(Alignment.Start)
+        )
+        Spacer(Modifier.height(16.dp))
 
-        // STATISTIKA
-        Text("Statistika igranja", fontWeight = FontWeight.SemiBold, modifier = Modifier.align(Alignment.Start))
-        Spacer(Modifier.height(8.dp))
-
-        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
             StatCard("Igre", state.totalGames.toString(), Modifier.weight(1f))
             StatCard("Zmage", state.wins.toString(), Modifier.weight(1f))
             val winPercent = if (state.totalGames > 0) (state.wins * 100 / state.totalGames) else 0
             StatCard("Uspeh", "$winPercent%", Modifier.weight(1f))
         }
 
+        Spacer(Modifier.height(24.dp))
+
+        // --- GRAF PORAZDELITVE ---
+        if (state.totalGames > 0) {
+            WinDistributionChart(state.winDistribution)
+        } else {
+            Text("Odigraj kakšno igro za prikaz grafa!", color = Color.Gray)
+        }
+
         Spacer(Modifier.weight(1f))
 
-        if (state.userData != null) {
+        if (state.isSignInSuccessful) {
             OutlinedButton(
                 modifier = Modifier.fillMaxWidth(),
                 onClick = {
@@ -180,6 +137,74 @@ fun StatCard(label: String, value: String, modifier: Modifier = Modifier) {
         ) {
             Text(value, fontSize = 20.sp, fontWeight = FontWeight.Bold)
             Text(label, fontSize = 12.sp)
+        }
+    }
+}
+
+@Composable
+fun WinDistributionChart(distribution: Map<Int, Int>) {
+    Text(
+        text = "Porazdelitev ugibov",
+        fontSize = 16.sp,
+        fontWeight = FontWeight.SemiBold,
+        modifier = Modifier.fillMaxWidth()
+    )
+    Spacer(modifier = Modifier.height(8.dp))
+
+    val maxVal = distribution.values.maxOrNull()?.coerceAtLeast(1) ?: 1
+
+    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        distribution.toSortedMap().forEach { (attempts, count) ->
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text(
+                    text = "$attempts",
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier.width(20.dp)
+                )
+
+                val fraction = count.toFloat() / maxVal
+                Box(
+                    modifier = Modifier
+                        .weight(1f)
+                        .height(24.dp),
+                    contentAlignment = Alignment.CenterStart
+                ) {
+                    if (count > 0) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth(fraction)
+                                .fillMaxHeight()
+                                .background(Color(0xFF66BB6A))
+                        ) {
+                            Text(
+                                text = "$count",
+                                color = Color.White,
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Bold,
+                                modifier = Modifier
+                                    .align(Alignment.CenterEnd)
+                                    .padding(end = 4.dp)
+                            )
+                        }
+                    } else {
+                        Box(
+                            modifier = Modifier
+                                .width(1.dp)
+                                .fillMaxHeight()
+                                .background(Color.LightGray)
+                        )
+                        Text(
+                            text = "0",
+                            color = Color.Black,
+                            fontSize = 12.sp,
+                            modifier = Modifier.padding(start = 6.dp)
+                        )
+                    }
+                }
+            }
         }
     }
 }
