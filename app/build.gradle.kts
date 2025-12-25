@@ -70,6 +70,7 @@ dependencies {
     implementation("org.jsoup:jsoup:1.17.2")
     implementation(platform("com.google.firebase:firebase-bom:33.7.0"))
     implementation("com.google.firebase:firebase-auth")
+    implementation("com.google.firebase:firebase-firestore")
     implementation("com.google.android.gms:play-services-auth:21.0.0")
     implementation("io.coil-kt:coil-compose:2.5.0")
 }
