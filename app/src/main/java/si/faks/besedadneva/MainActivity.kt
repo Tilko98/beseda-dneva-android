@@ -84,8 +84,7 @@ private fun AppScaffold(
                     solution = "MIZA?", // za zdaj hardcoded
                     mode = GameMode.DAILY
                 )
-                val vm: GameViewModel = viewModel(factory = factory)
-                GameScreen(vm = vm)
+                DailyMenuScreen(repo = repo)
             }
 
             composable(BottomRoute.Practice.route) { PracticeScreen(repo) }
@@ -93,7 +92,7 @@ private fun AppScaffold(
             composable(BottomRoute.History.route) {
                 val factory = HistoryViewModelFactory(repo)
                 val vm: HistoryViewModel = viewModel(factory = factory)
-                HistoryScreen(viewModel = vm)
+                HistoryScreen(repo = repo)
             }
 
             // 4. Podamo googleAuthClient v ProfileScreen

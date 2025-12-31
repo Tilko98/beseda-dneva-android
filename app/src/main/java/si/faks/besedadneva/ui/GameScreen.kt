@@ -17,6 +17,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import si.faks.besedadneva.ui.viewmodel.GameViewModel
 import si.faks.besedadneva.ui.viewmodel.GuessRowUi
+import si.faks.besedadneva.ui.viewmodel.GameMode
 
 @Composable
 fun GameScreen(
@@ -39,9 +40,6 @@ fun GameScreen(
         }
     }
 
-    // --- POPRAVEK DIALOGA ---
-    // Prej: if (state.isFinished && !state.isDialogShown) -> To je bilo narobe
-    // Zdaj: Preprosto preverimo flag
     if (state.isDialogShown) {
         AlertDialog(
             onDismissRequest = { vm.dismissDialog() },
@@ -67,7 +65,8 @@ fun GameScreen(
                     vm.dismissDialog()
                     onEndOk?.invoke()
                 }) {
-                    Text("OK / Nova igra")
+                    val btnText = if (state.mode == GameMode.DAILY) "OK" else "Nova igra"
+                    Text(btnText)
                 }
             }
         )

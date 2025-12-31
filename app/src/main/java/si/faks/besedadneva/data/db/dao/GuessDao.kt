@@ -33,4 +33,7 @@ interface GuessDao {
     // ZANIMIVA POIZVEDBA: vsi ugibi za game po vrstnem redu
     @Query("SELECT * FROM guesses WHERE gameId = :gameId ORDER BY guessIndex ASC")
     suspend fun getForGame(gameId: Long): List<GuessEntity>
+
+    @Query("DELETE FROM guesses WHERE gameId = :gameId")
+    suspend fun deleteForGame(gameId: Long)
 }

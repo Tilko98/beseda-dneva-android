@@ -25,48 +25,68 @@ class GameRepository(
     private val auth = FirebaseAuth.getInstance()
     private val db = FirebaseFirestore.getInstance()
 
-    // --- SHRANJEVANJE ---
-    suspend fun saveFinishedGame(game: GameEntity, guesses: List<GuessEntity>) {
-        val gameId = gameDao.insert(game)
-        val guessesWithId = guesses.map { it.copy(gameId = gameId) }
+    fun getUserFlow(): Flow<com.google.firebase.auth.FirebaseUser?> = callbackFlow {
+        val listener = FirebaseAuth.AuthStateListener { auth ->
+            trySend(auth.currentUser)
+        }
+        auth.addAuthStateListener(listener)
+        awaitClose { auth.removeAuthStateListener(listener) }
+    }
+
+    suspend fun savePracticeGame(game: GameEntity, guesses: List<GuessEntity>): Long {
+        val newGameId = gameDao.insert(game)
+        val guessesWithId = guesses.map { it.copy(gameId = newGameId) }
         guessDao.insertAll(guessesWithId)
 
         val user = auth.currentUser
         if (user != null) {
-            saveToCloud(user.uid, game, guesses)
+            // POPRAVEK: Uporabi isto funkcijo za update, da se izognemo logiki .add() vs .set()
+            saveToCloudUniversal(user.uid, game, guesses)
         }
+        return newGameId
     }
 
-    // NOVO: Brisanje zgodovine vaje
-    suspend fun deletePracticeHistory() {
-        // 1. Izbriši lokalno
-        gameDao.deleteByMode("PRACTICE")
-
-        // 2. Izbriši v oblaku (če je prijavljen)
+    suspend fun startDailyGame(game: GameEntity): Long {
+        val rowId = gameDao.insert(game)
         val user = auth.currentUser
         if (user != null) {
-            try {
-                // Firestore ne omogoča brisanja celotne kolekcije z enim ukazom iz klienta.
-                // Moramo poiskati dokumente in jih izbrisati (batch).
-                val snapshot = db.collection("users")
-                    .document(user.uid)
-                    .collection("games")
-                    .whereEqualTo("mode", "PRACTICE")
-                    .get()
-                    .await()
+            val docId = "${game.date}_${game.mode}"
+            val gameData = hashMapOf(
+                "date" to game.date,
+                "mode" to game.mode,
+                "solution" to game.solution,
+                "won" to false,
+                "attemptsUsed" to 0,
+                "finishedAtMillis" to game.finishedAtMillis
+            )
+            db.collection("users").document(user.uid).collection("games").document(docId).set(gameData).await()
+        }
+        return rowId
+    }
 
-                val batch = db.batch()
-                for (doc in snapshot.documents) {
-                    batch.delete(doc.reference)
-                }
-                batch.commit().await()
-            } catch (e: Exception) {
-                e.printStackTrace()
-            }
+    suspend fun updateGame(game: GameEntity, guesses: List<GuessEntity>) {
+        gameDao.update(game)
+        guessDao.deleteForGame(game.id)
+        val guessesWithId = guesses.map { it.copy(gameId = game.id) }
+        guessDao.insertAll(guessesWithId)
+
+        val user = auth.currentUser
+        if (user != null) {
+            // POPRAVEK: Zdaj kličemo univerzalno funkcijo za OBA načina (Daily in Practice)
+            saveToCloudUniversal(user.uid, game, guesses)
         }
     }
 
-    private fun saveToCloud(userId: String, game: GameEntity, guesses: List<GuessEntity>) {
+    // NOVO: Ena funkcija za shranjevanje v oblak, ki preprečuje podvajanje
+    private fun saveToCloudUniversal(userId: String, game: GameEntity, guesses: List<GuessEntity>) {
+        val docId = if (game.mode.startsWith("DAILY")) {
+            "${game.date}_${game.mode}" // ID za daily: 2024-05-20_DAILY_5
+        } else {
+            // ID za practice: PRACTICE_1715234235 (uporabimo timestamp začetka/konca)
+            // S tem preprečimo, da bi vsak 'save' ustvaril nov dokument
+            "PRACTICE_${game.finishedAtMillis}"
+        }
+
         val gameData = hashMapOf(
             "date" to game.date,
             "mode" to game.mode,
@@ -74,20 +94,52 @@ class GameRepository(
             "won" to game.won,
             "attemptsUsed" to game.attemptsUsed,
             "finishedAtMillis" to game.finishedAtMillis,
-            "guesses" to guesses.map {
-                mapOf("word" to it.guessWord, "pattern" to it.pattern)
-            }
+            "guesses" to guesses.map { mapOf("word" to it.guessWord, "pattern" to it.pattern) }
         )
-        db.collection("users").document(userId).collection("games").add(gameData)
+
+        // Uporabimo .set(), ki povozi podatke (update), namesto .add() (insert)
+        db.collection("users")
+            .document(userId)
+            .collection("games")
+            .document(docId)
+            .set(gameData)
     }
 
-    // --- BRANJE ---
-    fun getHistory(mode: String): Flow<List<GameHistoryItem>> {
+    suspend fun resolveLocalGameId(cloudGame: GameEntity): Long {
+        val localId = gameDao.getGameIdByDateAndMode(cloudGame.date, cloudGame.mode)
+        if (localId != null) {
+            return localId
+        } else {
+            val newLocalGame = cloudGame.copy(id = 0)
+            return gameDao.insert(newLocalGame)
+        }
+    }
+
+    fun getDailyGames(date: String): Flow<List<GameEntity>> {
         val user = auth.currentUser
         return if (user != null) {
-            getCloudHistory(user.uid, mode)
+            getCloudDailyGames(user.uid, date)
         } else {
-            gameDao.getGamesByMode(mode).map { games ->
+            gameDao.getGamesForDate(date)
+        }
+    }
+
+    suspend fun getGuessesForGame(gameId: Long): List<GuessEntity> {
+        return guessDao.getForGame(gameId)
+    }
+
+    fun getHistory(mode: String): Flow<List<GameHistoryItem>> {
+        val user = auth.currentUser
+        if (user != null) {
+            return getCloudHistory(user.uid, mode)
+        } else {
+            val gamesFlow = if (mode == "DAILY") {
+                gameDao.getGamesByModePattern("DAILY%")
+            } else {
+                gameDao.getGamesByMode(mode)
+            }
+
+            return gamesFlow.map { games ->
                 games.map { game ->
                     val guesses = guessDao.getForGame(game.id)
                     GameHistoryItem(game, guesses)
@@ -96,32 +148,23 @@ class GameRepository(
         }
     }
 
-    fun getAllGames(): Flow<List<GameEntity>> {
-        val user = auth.currentUser
-        return if (user != null) getCloudAllGames(user.uid) else gameDao.getAll()
-    }
-
     private fun getCloudHistory(userId: String, mode: String): Flow<List<GameHistoryItem>> = callbackFlow {
-        val query = db.collection("users")
-            .document(userId)
-            .collection("games")
-            .whereEqualTo("mode", mode)
-            .orderBy("finishedAtMillis", Query.Direction.DESCENDING)
+        var query = db.collection("users").document(userId).collection("games")
 
-        val listener = query.addSnapshotListener { snapshot, e ->
+        if (mode == "DAILY") {
+            query.whereGreaterThanOrEqualTo("mode", "DAILY").whereLessThanOrEqualTo("mode", "DAILY\uf8ff")
+        } else {
+            query.whereEqualTo("mode", mode)
+        }
+
+        val listener = query.orderBy("finishedAtMillis", Query.Direction.DESCENDING).addSnapshotListener { snapshot, e ->
             if (e != null) { close(e); return@addSnapshotListener }
-
             if (snapshot != null) {
                 val items = snapshot.documents.map { doc ->
                     val game = mapDocToGame(doc)
                     val guessesList = doc.get("guesses") as? List<Map<String, String>> ?: emptyList()
                     val guessesEntities = guessesList.mapIndexed { index, map ->
-                        GuessEntity(
-                            gameId = game.id,
-                            guessIndex = index,
-                            guessWord = map["word"] ?: "",
-                            pattern = map["pattern"] ?: ""
-                        )
+                        GuessEntity(gameId = game.id, guessIndex = index, guessWord = map["word"]?:"", pattern = map["pattern"]?:"")
                     }
                     GameHistoryItem(game, guessesEntities)
                 }
@@ -131,20 +174,56 @@ class GameRepository(
         awaitClose { listener.remove() }
     }
 
-    private fun getCloudAllGames(userId: String): Flow<List<GameEntity>> = callbackFlow {
+    fun getCloudDailyGames(userId: String, date: String): Flow<List<GameEntity>> = callbackFlow {
         val query = db.collection("users")
             .document(userId)
             .collection("games")
-            .orderBy("finishedAtMillis", Query.Direction.DESCENDING)
+            .whereEqualTo("date", date)
 
         val listener = query.addSnapshotListener { snapshot, e ->
-            if (e != null) { close(e); return@addSnapshotListener }
+            if (e != null) {
+                android.util.Log.e("GameRepo", "Firestore error: ${e.message}")
+                close(e)
+                return@addSnapshotListener
+            }
             if (snapshot != null) {
-                val games = snapshot.documents.map { mapDocToGame(it) }
+                val games = snapshot.documents.map { doc ->
+                    mapDocToGame(doc)
+                }
                 trySend(games)
             }
         }
         awaitClose { listener.remove() }
+    }
+
+    // Potrebno za ViewModel (da dostopa do lokalne baze)
+    fun getLocalDailyGames(date: String): Flow<List<GameEntity>> {
+        return gameDao.getGamesForDate(date)
+    }
+
+    fun getAllGames(): Flow<List<GameEntity>> {
+        val user = auth.currentUser
+        return if (user != null) getCloudAllGames(user.uid) else gameDao.getAll()
+    }
+
+    private fun getCloudAllGames(userId: String): Flow<List<GameEntity>> = callbackFlow {
+        val query = db.collection("users").document(userId).collection("games").orderBy("finishedAtMillis", Query.Direction.DESCENDING)
+        val listener = query.addSnapshotListener { snapshot, e ->
+            if (e != null) { close(e); return@addSnapshotListener }
+            if (snapshot != null) { trySend(snapshot.documents.map { mapDocToGame(it) }) }
+        }
+        awaitClose { listener.remove() }
+    }
+
+    suspend fun deletePracticeHistory() {
+        gameDao.deleteByMode("PRACTICE")
+        val user = auth.currentUser
+        if (user != null) {
+            val snapshot = db.collection("users").document(user.uid).collection("games").whereEqualTo("mode", "PRACTICE").get().await()
+            val batch = db.batch()
+            for (doc in snapshot.documents) batch.delete(doc.reference)
+            batch.commit().await()
+        }
     }
 
     private fun mapDocToGame(doc: com.google.firebase.firestore.DocumentSnapshot): GameEntity {

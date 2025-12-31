@@ -45,7 +45,8 @@ data class GameUiState(
 class GameViewModel(
     private val repo: GameRepository,
     private val solution: String,
-    private val mode: GameMode
+    private val mode: GameMode,
+    private val existingGameId: Long? = null
 ) : ViewModel() {
 
     private val gameId: String = if (mode == GameMode.DAILY) {
@@ -74,8 +75,56 @@ class GameViewModel(
     )
     val state: StateFlow<GameUiState> = _state.asStateFlow()
 
+    private var currentGameId: Long? = existingGameId
+
     private val _shakeEvent = Channel<Unit>()
     val shakeEvent = _shakeEvent.receiveAsFlow()
+
+    init {
+        // NOVO: Če igra že obstaja (resume), naloži prejšnje ugibe
+        if (existingGameId != null) {
+            viewModelScope.launch {
+                val oldGuesses = repo.getGuessesForGame(existingGameId)
+                if (oldGuesses.isNotEmpty()) {
+                    restoreGameState(oldGuesses)
+                }
+            }
+        }
+    }
+
+    // Funkcija za obnovo stanja
+    private fun restoreGameState(guesses: List<GuessEntity>) {
+        val currentRows = _state.value.rows.toMutableList()
+        var winFound = false
+
+        guesses.forEachIndexed { index, guess ->
+            if (index < maxRows) {
+                currentRows[index] = GuessRowUi(
+                    letters = guess.guessWord,
+                    pattern = guess.pattern
+                )
+                if (guess.pattern.all { it == 'G' }) {
+                    winFound = true
+                }
+            }
+        }
+
+        val nextIndex = guesses.size.coerceAtMost(maxRows - 1)
+        // Če je igra že končana (zmaga ali poraz po vseh poskusih)
+        val isFinished = winFound || guesses.size >= maxRows
+
+        _state.update {
+            it.copy(
+                rows = currentRows,
+                currentRowIndex = if (isFinished) nextIndex else guesses.size, // Nastavimo na naslednjo prosto vrstico
+                isFinished = isFinished,
+                isWin = winFound,
+                isDialogShown = isFinished // Pokaži dialog samo, če je dejansko konec
+            )
+        }
+    }
+
+    // ... (onLetter, onBackspace, onEnter ostanejo ENAKI kot prej) ...
 
     fun onLetter(char: Char) {
         val s = _state.value
@@ -160,28 +209,22 @@ class GameViewModel(
                     isWin = isWin,
                     currentRowIndex = if (isFinished) it.currentRowIndex else it.currentRowIndex + 1,
                     currentColIndex = if (isFinished) it.currentColIndex else 0,
-                    // TU JE POPRAVEK: Ko je konec, pokaži dialog
                     isDialogShown = isFinished
                 )
             }
-
             if (isFinished) {
                 saveGameResult()
+            } else {
+                saveProgress()
             }
         }
     }
-
-    fun dismissDialog() {
-        _state.update { it.copy(isDialogShown = false) }
+    private fun saveProgress() {
+        saveGameResult()
     }
-
-    fun clearMessage() {
-        _state.update { it.copy(message = null) }
-    }
-
-    private fun showMessage(msg: String) {
-        _state.update { it.copy(message = msg) }
-    }
+    fun dismissDialog() { _state.update { it.copy(isDialogShown = false) } }
+    fun clearMessage() { _state.update { it.copy(message = null) } }
+    private fun showMessage(msg: String) { _state.update { it.copy(message = msg) } }
 
     private fun saveGameResult() {
         val s = _state.value
@@ -191,9 +234,13 @@ class GameViewModel(
         }
         val attemptsUsed = submitted.size
 
+        val dbMode = if (s.mode == GameMode.DAILY) "DAILY_${s.solution.length}" else s.mode.name
+
+        // Pazi: Uporabi currentGameId ali 0, če ga še ni
         val game = GameEntity(
+            id = currentGameId ?: 0,
             date = gameId,
-            mode = s.mode.name,
+            mode = dbMode,
             solution = s.solution,
             won = s.isWin,
             attemptsUsed = attemptsUsed,
@@ -201,28 +248,32 @@ class GameViewModel(
         )
 
         val guesses = submitted.map { (idx, word, pat) ->
-            GuessEntity(
-                gameId = 0,
-                guessIndex = idx,
-                guessWord = word,
-                pattern = pat
-            )
+            GuessEntity(gameId = 0, guessIndex = idx, guessWord = word, pattern = pat)
         }
 
         viewModelScope.launch {
-            repo.saveFinishedGame(game, guesses)
+            if (currentGameId != null) {
+                // Če ID imamo, naredimo UPDATE (za Daily IN Practice)
+                repo.updateGame(game, guesses)
+            } else {
+                // Če ID-ja nimamo (Prvi insert za Practice)
+                val newId = repo.savePracticeGame(game, guesses)
+
+                // SHRANIMO NOV ID, da bo naslednji save uporabil update!
+                currentGameId = newId
+            }
         }
     }
 }
-
+// Factory ostane enak
 class GameViewModelFactory(
     private val repo: GameRepository,
     private val solution: String,
-    private val mode: GameMode
+    private val mode: GameMode,
+    private val existingGameId: Long? = null
 ) : ViewModelProvider.Factory {
-
     @Suppress("UNCHECKED_CAST")
     override fun <T : ViewModel> create(modelClass: Class<T>): T {
-        return GameViewModel(repo, solution, mode) as T
+        return GameViewModel(repo, solution, mode, existingGameId) as T
     }
 }

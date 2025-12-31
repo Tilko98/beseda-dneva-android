@@ -16,7 +16,6 @@ import si.faks.besedadneva.data.db.entities.GameEntity
 import si.faks.besedadneva.ui.auth.SignInResult
 import si.faks.besedadneva.ui.auth.UserData
 
-// Pomožni razred za statistiko
 data class GameStats(
     val totalGames: Int = 0,
     val wins: Int = 0,
@@ -27,7 +26,6 @@ data class ProfileState(
     val isSignInSuccessful: Boolean = false,
     val signInError: String? = null,
     val userData: UserData? = null,
-    // LOČENA STATISTIKA:
     val dailyStats: GameStats = GameStats(),
     val practiceStats: GameStats = GameStats()
 )
@@ -57,8 +55,11 @@ class ProfileViewModel(private val repo: GameRepository) : ViewModel() {
         statsJob?.cancel()
         statsJob = viewModelScope.launch {
             repo.getAllGames().collectLatest { games ->
-                // Filtriramo igre
-                val dailyGames = games.filter { it.mode == "DAILY" }
+
+                // POPRAVEK FILTRA: Uporabi startsWith namesto ==
+                // Tako ujamemo DAILY_4, DAILY_5 in DAILY_6
+                val dailyGames = games.filter { it.mode.startsWith("DAILY") }
+
                 val practiceGames = games.filter { it.mode == "PRACTICE" }
 
                 _state.update {
@@ -80,21 +81,19 @@ class ProfileViewModel(private val repo: GameRepository) : ViewModel() {
             .groupBy { it.attemptsUsed }
             .mapValues { entry -> entry.value.size }
 
-        val finalDist = (1..6).associateWith { distMap[it] ?: 0 }
+        // POPRAVEK: Graf naj pokriva od 1 do 7 (ker ima težka igra 7 poskusov)
+        val finalDist = (1..7).associateWith { distMap[it] ?: 0 }
 
         return GameStats(total, wins, finalDist)
     }
 
-    // NOVO: Funkcija za reset vaje
     fun resetPracticeHistory() {
         viewModelScope.launch {
             repo.deletePracticeHistory()
-            // Opomba: Ker repo.getAllGames() posluša spremembe (Flow),
-            // se bo statistika v loadStats avtomatsko posodobila, ko se baza spremeni.
         }
     }
 
-    // --- AVTENTIKACIJA (Nespremenjeno) ---
+    // --- AVTENTIKACIJA ---
     fun signInWithEmail(email: String, pass: String) {
         if (email.isBlank() || pass.isBlank()) {
             _state.update { it.copy(signInError = "Vnesi e-pošto in geslo") }
