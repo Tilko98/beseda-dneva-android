@@ -1,11 +1,15 @@
 package si.faks.besedadneva.ui
 
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.rememberPagerState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
+import androidx.compose.material3.TabRowDefaults.tabIndicatorOffset
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -13,124 +17,112 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.viewmodel.compose.viewModel
+import kotlinx.coroutines.launch
 import si.faks.besedadneva.data.db.GameHistoryItem
+import si.faks.besedadneva.data.db.GameRepository
+import si.faks.besedadneva.data.db.entities.GuessEntity
 import si.faks.besedadneva.ui.viewmodel.HistoryViewModel
-import java.text.SimpleDateFormat
-import java.util.*
+import si.faks.besedadneva.ui.viewmodel.HistoryViewModelFactory
 
 @Composable
-fun HistoryScreen(viewModel: HistoryViewModel) {
-    val dailyGames by viewModel.dailyGames.collectAsState()
-    val practiceGames by viewModel.practiceGames.collectAsState()
+fun HistoryScreen(repo: GameRepository) {
+    val vm: HistoryViewModel = viewModel(factory = HistoryViewModelFactory(repo))
+    val state by vm.state.collectAsState()
 
-    var selectedTabIndex by remember { mutableIntStateOf(0) }
-    val tabs = listOf("Dnevna", "Vaja")
-
-    // Stanje za izbrano igro (za prikaz dialoga)
-    var selectedGameItem by remember { mutableStateOf<GameHistoryItem?>(null) }
-
-    // --- DIALOG ZA REPLAY ---
-    if (selectedGameItem != null) {
-        val item = selectedGameItem!!
-        AlertDialog(
-            onDismissRequest = { selectedGameItem = null },
-            title = {
-                Text(
-                    text = "Rešitev: ${item.game.solution}",
-                    fontWeight = FontWeight.Bold
-                )
-            },
-            text = {
-                // Izris mreže ugibov
-                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    item.guesses.forEach { guess ->
-                        Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                            guess.guessWord.forEachIndexed { i, char ->
-                                val patternChar = guess.pattern.getOrNull(i)
-                                // Mini verzija LetterBox-a
-                                MiniLetterBox(char, patternChar)
-                            }
-                        }
-                    }
-                }
-            },
-            confirmButton = {
-                TextButton(onClick = { selectedGameItem = null }) {
-                    Text("Zapri")
-                }
-            }
-        )
-    }
-    // -----------------------
+    val pagerState = rememberPagerState(pageCount = { 2 })
+    val scope = rememberCoroutineScope()
+    val titles = listOf("Dnevne igre", "Vaja")
 
     Column(modifier = Modifier.fillMaxSize()) {
-        TabRow(selectedTabIndex = selectedTabIndex) {
-            tabs.forEachIndexed { index, title ->
+        TabRow(
+            selectedTabIndex = pagerState.currentPage,
+            indicator = { tabPositions ->
+                TabRowDefaults.Indicator(
+                    Modifier.tabIndicatorOffset(tabPositions[pagerState.currentPage]),
+                    color = MaterialTheme.colorScheme.primary
+                )
+            }
+        ) {
+            titles.forEachIndexed { index, title ->
                 Tab(
-                    selected = selectedTabIndex == index,
-                    onClick = { selectedTabIndex = index },
+                    selected = pagerState.currentPage == index,
+                    onClick = { scope.launch { pagerState.animateScrollToPage(index) } },
                     text = { Text(title) }
                 )
             }
         }
 
-        val listToShow = if (selectedTabIndex == 0) dailyGames else practiceGames
+        HorizontalPager(state = pagerState, modifier = Modifier.weight(1f)) { page ->
+            if (page == 0) {
+                HistoryList(games = state.dailyGames, emptyText = "Ni odigranih dnevnih iger")
+            } else {
+                HistoryList(games = state.practiceGames, emptyText = "Ni odigranih vaj")
+            }
+        }
+    }
+}
 
+@Composable
+fun HistoryList(games: List<GameHistoryItem>, emptyText: String) {
+    if (games.isEmpty()) {
+        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+            Text(emptyText, color = Color.Gray)
+        }
+    } else {
         LazyColumn(
-            modifier = Modifier.fillMaxSize(),
             contentPadding = PaddingValues(16.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp)
+            verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            items(listToShow) { item ->
-                HistoryItemRow(
-                    item = item,
-                    onClick = { selectedGameItem = item } // Ob kliku nastavimo izbrano igro
-                )
+            items(games) { item ->
+                HistoryItemCard(item)
             }
         }
     }
 }
 
 @Composable
-fun HistoryItemRow(item: GameHistoryItem, onClick: () -> Unit) {
-    val game = item.game
+fun HistoryItemCard(item: GameHistoryItem) {
     Card(
-        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-        modifier = Modifier.fillMaxWidth().clickable { onClick() } // Omogočimo klik
+        elevation = CardDefaults.cardElevation(2.dp),
+        colors = CardDefaults.cardColors(containerColor = Color.White),
+        modifier = Modifier.fillMaxWidth()
     ) {
-        Row(
-            modifier = Modifier.padding(16.dp).fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
+        Column(
+            modifier = Modifier.padding(16.dp)
         ) {
-            Column {
-                Text(
-                    text = game.solution,
-                    fontWeight = FontWeight.Bold,
-                    fontSize = 20.sp
-                )
-                val dateStr = if (game.mode == "DAILY") {
-                    game.date
-                } else {
-                    formatTimestamp(game.finishedAtMillis)
+            // Glava: Beseda in Datum
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column {
+                    Text(
+                        text = item.game.solution.uppercase(),
+                        fontWeight = FontWeight.ExtraBold,
+                        fontSize = 18.sp
+                    )
+                    Text(
+                        text = item.game.date,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = Color.Gray
+                    )
                 }
-                Text(text = dateStr, style = MaterialTheme.typography.bodySmall)
+
+                if (item.game.won) {
+                    Text("✓ V ${item.game.attemptsUsed}. poskusu", color = Color(0xFF66BB6A), fontWeight = FontWeight.Bold)
+                } else {
+                    Text("X Poraz", color = Color.Red, fontWeight = FontWeight.Bold)
+                }
             }
 
-            Column(horizontalAlignment = Alignment.End) {
-                if (game.won) {
-                    Text(
-                        text = "${game.attemptsUsed}/6",
-                        fontWeight = FontWeight.Bold,
-                        color = Color(0xFF2E7D32)
-                    )
-                } else {
-                    Text(
-                        text = "X",
-                        fontWeight = FontWeight.Bold,
-                        color = Color(0xFFC62828)
-                    )
+            Spacer(modifier = Modifier.height(12.dp))
+
+            // Telo: Seznam ugibov (Grid)
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                item.guesses.forEach { guess ->
+                    HistoryGuessRow(guess)
                 }
             }
         }
@@ -138,26 +130,30 @@ fun HistoryItemRow(item: GameHistoryItem, onClick: () -> Unit) {
 }
 
 @Composable
-fun MiniLetterBox(char: Char, patternChar: Char?) {
-    val color = when (patternChar) {
-        'G' -> Color(0xFF66BB6A)
-        'Y' -> Color(0xFFFFEE58)
-        'X' -> Color(0xFFBDBDBD)
-        else -> Color.LightGray
-    }
-    val textColor = if (patternChar == 'Y') Color.Black else Color.White
+fun HistoryGuessRow(guess: GuessEntity) {
+    Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+        guess.guessWord.forEachIndexed { index, char ->
+            val colorChar = guess.pattern.getOrNull(index) ?: 'X'
+            val bgColor = when (colorChar) {
+                'G' -> Color(0xFF66BB6A) // Green
+                'Y' -> Color(0xFFFFEE58) // Yellow
+                else -> Color(0xFFE0E0E0) // Gray
+            }
 
-    Box(
-        modifier = Modifier
-            .size(30.dp) // Manjša velikost za dialog
-            .background(color, androidx.compose.foundation.shape.RoundedCornerShape(4.dp)),
-        contentAlignment = Alignment.Center
-    ) {
-        Text(text = char.toString(), fontWeight = FontWeight.Bold, color = textColor)
+            Box(
+                modifier = Modifier
+                    .size(24.dp)
+                    .background(bgColor, RoundedCornerShape(2.dp))
+                    .border(1.dp, Color.LightGray, RoundedCornerShape(2.dp)),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    text = char.toString().uppercase(),
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = if (colorChar == 'Y') Color.Black else Color.White
+                )
+            }
+        }
     }
-}
-
-fun formatTimestamp(millis: Long): String {
-    val sdf = SimpleDateFormat("dd.MM.yyyy HH:mm", Locale.getDefault())
-    return sdf.format(Date(millis))
 }
