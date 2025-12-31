@@ -2,7 +2,9 @@ package si.faks.besedadneva.ui
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -16,6 +18,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import kotlinx.coroutines.launch
 import si.faks.besedadneva.data.db.GameRepository
 import si.faks.besedadneva.ui.auth.GoogleAuthClient
+import si.faks.besedadneva.ui.viewmodel.GameStats
 import si.faks.besedadneva.ui.viewmodel.ProfileViewModel
 import si.faks.besedadneva.ui.viewmodel.ProfileViewModelFactory
 
@@ -27,6 +30,30 @@ fun ProfileScreen(
 ) {
     val state by viewModel.state.collectAsState()
     val scope = rememberCoroutineScope()
+    val scrollState = rememberScrollState()
+
+    // Za reset dialog
+    var showResetDialog by remember { mutableStateOf(false) }
+
+    if (showResetDialog) {
+        AlertDialog(
+            onDismissRequest = { showResetDialog = false },
+            title = { Text("Ponastavi zgodovino vaje?") },
+            text = { Text("To bo izbrisalo vso statistiko in zgodovino odigranih vaj. Tega dejanja ni mogoče razveljaviti.") },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        viewModel.resetPracticeHistory()
+                        showResetDialog = false
+                    },
+                    colors = ButtonDefaults.textButtonColors(contentColor = Color.Red)
+                ) { Text("Izbriši") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showResetDialog = false }) { Text("Prekliči") }
+            }
+        )
+    }
 
     var email by remember { mutableStateOf("") }
     var password by remember { mutableStateOf("") }
@@ -34,7 +61,8 @@ fun ProfileScreen(
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .padding(16.dp),
+            .padding(16.dp)
+            .verticalScroll(scrollState), // Dodan scroll, ker imamo zdaj več vsebine
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
         Text("Profil & Statistika", fontSize = 24.sp, fontWeight = FontWeight.Bold)
@@ -45,6 +73,7 @@ fun ProfileScreen(
             Text("Pozdravljen, ${state.userData?.username ?: "Uporabnik"}!")
             Spacer(Modifier.height(8.dp))
         } else {
+            // Login forma
             OutlinedTextField(
                 value = email,
                 onValueChange = { email = it },
@@ -68,46 +97,52 @@ fun ProfileScreen(
                     Text("Registracija")
                 }
             }
-
             if (state.signInError != null) {
                 Spacer(Modifier.height(8.dp))
                 Text(state.signInError!!, color = Color.Red, fontSize = 14.sp)
             }
-
             Spacer(Modifier.height(24.dp))
             Divider()
             Spacer(Modifier.height(24.dp))
         }
 
-        // --- STATISTIKA (Spremenjen naslov) ---
+        // --- 1. DNEVNA STATISTIKA ---
         Text(
-            text = "Skupna Statistika (Vse igre)",
+            text = "Dnevna Statistika",
             fontSize = 20.sp,
             fontWeight = FontWeight.SemiBold,
             modifier = Modifier.align(Alignment.Start)
         )
         Spacer(Modifier.height(16.dp))
+        StatsSection(stats = state.dailyStats)
 
+        Spacer(Modifier.height(32.dp))
+        Divider()
+        Spacer(Modifier.height(32.dp))
+
+        // --- 2. STATISTIKA VAJE ---
         Row(
             modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(12.dp)
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
         ) {
-            StatCard("Igre", state.totalGames.toString(), Modifier.weight(1f))
-            StatCard("Zmage", state.wins.toString(), Modifier.weight(1f))
-            val winPercent = if (state.totalGames > 0) (state.wins * 100 / state.totalGames) else 0
-            StatCard("Uspeh", "$winPercent%", Modifier.weight(1f))
+            Text(
+                text = "Statistika Vaje",
+                fontSize = 20.sp,
+                fontWeight = FontWeight.SemiBold
+            )
+            // GUMB ZA RESET
+            TextButton(
+                onClick = { showResetDialog = true },
+                colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error)
+            ) {
+                Text("Ponastavi")
+            }
         }
+        Spacer(Modifier.height(16.dp))
+        StatsSection(stats = state.practiceStats)
 
-        Spacer(Modifier.height(24.dp))
-
-        // --- GRAF PORAZDELITVE ---
-        if (state.totalGames > 0) {
-            WinDistributionChart(state.winDistribution)
-        } else {
-            Text("Odigraj kakšno igro za prikaz grafa!", color = Color.Gray)
-        }
-
-        Spacer(Modifier.weight(1f))
+        Spacer(Modifier.height(48.dp))
 
         if (state.isSignInSuccessful) {
             OutlinedButton(
@@ -121,7 +156,29 @@ fun ProfileScreen(
             ) {
                 Text("Odjava")
             }
+            Spacer(Modifier.height(16.dp))
         }
+    }
+}
+
+@Composable
+fun StatsSection(stats: GameStats) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        StatCard("Igre", stats.totalGames.toString(), Modifier.weight(1f))
+        StatCard("Zmage", stats.wins.toString(), Modifier.weight(1f))
+        val winPercent = if (stats.totalGames > 0) (stats.wins * 100 / stats.totalGames) else 0
+        StatCard("Uspeh", "$winPercent%", Modifier.weight(1f))
+    }
+
+    Spacer(Modifier.height(24.dp))
+
+    if (stats.totalGames > 0) {
+        WinDistributionChart(stats.winDistribution)
+    } else {
+        Text("Ni podatkov za prikaz grafa.", color = Color.Gray)
     }
 }
 

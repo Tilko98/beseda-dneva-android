@@ -7,12 +7,12 @@ import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.tasks.await
 import si.faks.besedadneva.data.db.dao.GameDao
 import si.faks.besedadneva.data.db.dao.GuessDao
 import si.faks.besedadneva.data.db.entities.GameEntity
 import si.faks.besedadneva.data.db.entities.GuessEntity
 
-// Pomožni razred za prikaz v UI (Igra + njeni ugibi)
 data class GameHistoryItem(
     val game: GameEntity,
     val guesses: List<GuessEntity>
@@ -25,7 +25,7 @@ class GameRepository(
     private val auth = FirebaseAuth.getInstance()
     private val db = FirebaseFirestore.getInstance()
 
-    // --- SHRANJEVANJE (Nespremenjeno) ---
+    // --- SHRANJEVANJE ---
     suspend fun saveFinishedGame(game: GameEntity, guesses: List<GuessEntity>) {
         val gameId = gameDao.insert(game)
         val guessesWithId = guesses.map { it.copy(gameId = gameId) }
@@ -34,6 +34,35 @@ class GameRepository(
         val user = auth.currentUser
         if (user != null) {
             saveToCloud(user.uid, game, guesses)
+        }
+    }
+
+    // NOVO: Brisanje zgodovine vaje
+    suspend fun deletePracticeHistory() {
+        // 1. Izbriši lokalno
+        gameDao.deleteByMode("PRACTICE")
+
+        // 2. Izbriši v oblaku (če je prijavljen)
+        val user = auth.currentUser
+        if (user != null) {
+            try {
+                // Firestore ne omogoča brisanja celotne kolekcije z enim ukazom iz klienta.
+                // Moramo poiskati dokumente in jih izbrisati (batch).
+                val snapshot = db.collection("users")
+                    .document(user.uid)
+                    .collection("games")
+                    .whereEqualTo("mode", "PRACTICE")
+                    .get()
+                    .await()
+
+                val batch = db.batch()
+                for (doc in snapshot.documents) {
+                    batch.delete(doc.reference)
+                }
+                batch.commit().await()
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
         }
     }
 
@@ -53,14 +82,11 @@ class GameRepository(
     }
 
     // --- BRANJE ---
-
-    // Sprememba: Vrača GameHistoryItem namesto GameEntity
     fun getHistory(mode: String): Flow<List<GameHistoryItem>> {
         val user = auth.currentUser
         return if (user != null) {
             getCloudHistory(user.uid, mode)
         } else {
-            // Lokalno branje: Room Flow<List<Game>> mapiramo v Flow<List<GameHistoryItem>>
             gameDao.getGamesByMode(mode).map { games ->
                 games.map { game ->
                     val guesses = guessDao.getForGame(game.id)
@@ -75,8 +101,6 @@ class GameRepository(
         return if (user != null) getCloudAllGames(user.uid) else gameDao.getAll()
     }
 
-    // --- PRIVATE HELPERS ---
-
     private fun getCloudHistory(userId: String, mode: String): Flow<List<GameHistoryItem>> = callbackFlow {
         val query = db.collection("users")
             .document(userId)
@@ -89,17 +113,7 @@ class GameRepository(
 
             if (snapshot != null) {
                 val items = snapshot.documents.map { doc ->
-                    val game = GameEntity(
-                        id = doc.id.hashCode().toLong(),
-                        date = doc.getString("date") ?: "",
-                        mode = doc.getString("mode") ?: "",
-                        solution = doc.getString("solution") ?: "",
-                        won = doc.getBoolean("won") ?: false,
-                        attemptsUsed = (doc.getLong("attemptsUsed") ?: 0).toInt(),
-                        finishedAtMillis = doc.getLong("finishedAtMillis") ?: 0L
-                    )
-
-                    // Parsanje ugibov iz polja "guesses" v dokumentu
+                    val game = mapDocToGame(doc)
                     val guessesList = doc.get("guesses") as? List<Map<String, String>> ?: emptyList()
                     val guessesEntities = guessesList.mapIndexed { index, map ->
                         GuessEntity(
@@ -109,7 +123,6 @@ class GameRepository(
                             pattern = map["pattern"] ?: ""
                         )
                     }
-
                     GameHistoryItem(game, guessesEntities)
                 }
                 trySend(items)
@@ -118,27 +131,31 @@ class GameRepository(
         awaitClose { listener.remove() }
     }
 
-    // Ta funkcija ostane enaka, ker za statistiko profila ne rabimo ugibov
     private fun getCloudAllGames(userId: String): Flow<List<GameEntity>> = callbackFlow {
-        val query = db.collection("users").document(userId).collection("games")
+        val query = db.collection("users")
+            .document(userId)
+            .collection("games")
             .orderBy("finishedAtMillis", Query.Direction.DESCENDING)
+
         val listener = query.addSnapshotListener { snapshot, e ->
             if (e != null) { close(e); return@addSnapshotListener }
             if (snapshot != null) {
-                val games = snapshot.documents.map { doc ->
-                    GameEntity(
-                        id = doc.id.hashCode().toLong(),
-                        date = doc.getString("date") ?: "",
-                        mode = doc.getString("mode") ?: "",
-                        solution = doc.getString("solution") ?: "",
-                        won = doc.getBoolean("won") ?: false,
-                        attemptsUsed = (doc.getLong("attemptsUsed") ?: 0).toInt(),
-                        finishedAtMillis = doc.getLong("finishedAtMillis") ?: 0L
-                    )
-                }
+                val games = snapshot.documents.map { mapDocToGame(it) }
                 trySend(games)
             }
         }
         awaitClose { listener.remove() }
+    }
+
+    private fun mapDocToGame(doc: com.google.firebase.firestore.DocumentSnapshot): GameEntity {
+        return GameEntity(
+            id = doc.id.hashCode().toLong(),
+            date = doc.getString("date") ?: "",
+            mode = doc.getString("mode") ?: "",
+            solution = doc.getString("solution") ?: "",
+            won = doc.getBoolean("won") ?: false,
+            attemptsUsed = (doc.getLong("attemptsUsed") ?: 0).toInt(),
+            finishedAtMillis = doc.getLong("finishedAtMillis") ?: 0L
+        )
     }
 }
