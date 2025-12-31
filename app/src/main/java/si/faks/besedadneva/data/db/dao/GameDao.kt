@@ -7,27 +7,25 @@ import si.faks.besedadneva.data.db.entities.GameEntity
 @Dao
 interface GameDao {
 
-    // INSERT
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insert(game: GameEntity): Long
 
-    // UPDATE
     @Update
     suspend fun update(game: GameEntity)
 
-    // DELETE
     @Delete
     suspend fun delete(game: GameEntity)
 
-    // GET ONE
+    // NOVO: Brisanje vseh iger določenega načina (za reset vaje)
+    @Query("DELETE FROM games WHERE mode = :mode")
+    suspend fun deleteByMode(mode: String)
+
     @Query("SELECT * FROM games WHERE id = :id")
     suspend fun getById(id: Long): GameEntity?
 
-    // GET ALL
     @Query("SELECT * FROM games ORDER BY finishedAtMillis DESC")
     fun getAll(): Flow<List<GameEntity>>
 
-    // ZANIMIVA POIZVEDBA: zadnjih 30 daily iger
     @Query("""
         SELECT * FROM games
         WHERE mode = 'DAILY'
@@ -36,7 +34,6 @@ interface GameDao {
     """)
     fun getLast30Daily(): Flow<List<GameEntity>>
 
-    //  LOCIMO DAILY IN VAJO
     @Query("SELECT * FROM games WHERE mode = :mode ORDER BY finishedAtMillis DESC")
     fun getGamesByMode(mode: String): Flow<List<GameEntity>>
 }
